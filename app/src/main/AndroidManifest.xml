@@ -14,6 +14,7 @@
         <service
             android:name=".FloatingBrowserService"
             android:exported="false"
+            android:configChanges="orientation|screenSize"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-initiated floating web browser overlay" />
         </service>

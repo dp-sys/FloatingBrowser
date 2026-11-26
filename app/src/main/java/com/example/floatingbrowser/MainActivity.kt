@@ -2,8 +2,10 @@ package com.example.floatingbrowser
 
 import android.app.*
 import android.content.*
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.*
@@ -15,6 +17,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
 import kotlin.math.abs
+import kotlin.math.min
 
 class MainActivity : Activity() {
     override fun onCreate(state: Bundle?) {
@@ -45,6 +48,11 @@ class FloatingBrowserService : Service() {
     private var browserFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
     private var browserScrollX = 0
     private var browserScrollY = 0
+    private var maximized = false
+    private var restoreWidth = 0
+    private var restoreHeight = 0
+    private var restoreX = 0
+    private var restoreY = 0
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
 
@@ -86,24 +94,25 @@ class FloatingBrowserService : Service() {
             loadUrl("https://www.google.com")
         }
         web = page
-        view.addView(page, FrameLayout.LayoutParams(-1, -1))
+        view.addView(page, FrameLayout.LayoutParams(-1, -1).apply { topMargin = d(28) })
 
-        // The grip is only 4dp painted, but retains a 24dp hit target for dragging.
-        val grip = View(this).apply { setBackgroundColor(Color.argb(120, 60, 60, 60)) }
-        view.addView(grip, FrameLayout.LayoutParams(-1, d(4), Gravity.TOP))
+        val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
         val dragArea = View(this)
-        view.addView(dragArea, FrameLayout.LayoutParams(-1, d(24), Gravity.TOP))
-
+        bar.addView(dragArea, FrameLayout.LayoutParams(-1, -1))
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val minus = button("−") { page.zoomOut() }
-        val plus = button("+") { page.zoomIn() }
-        val menu = button("☰") { toggleMenu(view, page) }
-        left.addView(minus); left.addView(plus); left.addView(menu)
-        view.addView(left, FrameLayout.LayoutParams(d(96), d(28), Gravity.TOP or Gravity.START))
+        left.addView(button("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
+        left.addView(button("‹") { if (page.canGoBack()) page.goBack() })
+        left.addView(button("›") { if (page.canGoForward()) page.goForward() })
+        left.addView(button("−") { page.zoomOut() })
+        left.addView(button("+") { page.zoomIn() })
+        bar.addView(left, FrameLayout.LayoutParams(d(160), d(28), Gravity.START))
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        right.addView(button("—") { minimize() }); right.addView(button("×") { stopSelf() })
-        view.addView(right, FrameLayout.LayoutParams(d(64), d(28), Gravity.TOP or Gravity.END))
+        right.addView(button("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
+        right.addView(button("—", Color.rgb(76, 175, 80)) { minimize() })
+        right.addView(button("×", Color.rgb(244, 67, 54)) { stopSelf() })
+        bar.addView(right, FrameLayout.LayoutParams(d(96), d(28), Gravity.END))
+        view.addView(bar, FrameLayout.LayoutParams(-1, d(28), Gravity.TOP))
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
         view.addView(handle, FrameLayout.LayoutParams(d(28), d(28), Gravity.BOTTOM or Gravity.END))
@@ -114,6 +123,7 @@ class FloatingBrowserService : Service() {
         } else params = layoutParams(d(360), d(560))
         root = view
         wm.addView(view, params)
+        fitToDisplay()
     }
 
     private fun enableWebInput(view: View) {
@@ -125,8 +135,43 @@ class FloatingBrowserService : Service() {
         }
     }
 
-    private fun button(label: String, action: () -> Unit) = TextView(this).apply {
-        text = label; textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.DKGRAY)
+    @Suppress("DEPRECATION")
+    private fun displaySize(): Point = Point().also { wm.defaultDisplay.getSize(it) }
+
+    private fun fitToDisplay() {
+        val size = displaySize()
+        if (maximized) {
+            params.width = size.x; params.height = size.y; params.x = 0; params.y = 0
+        } else {
+            params.width = min(params.width, size.x)
+            params.height = min(params.height, size.y)
+            params.x = params.x.coerceIn(0, maxOf(0, size.x - params.width))
+            params.y = params.y.coerceIn(0, maxOf(0, size.y - params.height))
+        }
+        current()?.let { wm.updateViewLayout(it, params) }
+    }
+
+    private fun toggleMaximize() {
+        if (minimized || root == null) return
+        if (!maximized) {
+            restoreWidth = params.width; restoreHeight = params.height
+            restoreX = params.x; restoreY = params.y
+            maximized = true
+        } else {
+            params.width = restoreWidth; params.height = restoreHeight
+            params.x = restoreX; params.y = restoreY
+            maximized = false
+        }
+        fitToDisplay()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        fitToDisplay()
+    }
+
+    private fun button(label: String, color: Int = Color.WHITE, action: () -> Unit) = TextView(this).apply {
+        text = label; textSize = 18f; gravity = Gravity.CENTER; setTextColor(color)
         setOnClickListener { action() }; layoutParams = LinearLayout.LayoutParams(d(32), d(28))
     }
 
@@ -177,7 +222,7 @@ class FloatingBrowserService : Service() {
     private fun drag(v: View, resize: Boolean) = v.setOnTouchListener(object : View.OnTouchListener {
         var x = 0; var y = 0; var w = 0; var h = 0; var downX = 0f; var downY = 0f
         override fun onTouch(view: View, e: MotionEvent): Boolean = when (e.action) {
-            MotionEvent.ACTION_DOWN -> { x = params.x; y = params.y; w = params.width; h = params.height; downX = e.rawX; downY = e.rawY; true }
+            MotionEvent.ACTION_DOWN -> { if (resize) maximized = false; x = params.x; y = params.y; w = params.width; h = params.height; downX = e.rawX; downY = e.rawY; true }
             MotionEvent.ACTION_MOVE -> { if (resize) { params.width = maxOf(d(180), w + (e.rawX - downX).toInt()); params.height = maxOf(d(180), h + (e.rawY - downY).toInt()) } else { params.x = x + (e.rawX - downX).toInt(); params.y = y + (e.rawY - downY).toInt() }; current()?.let { wm.updateViewLayout(it, params) }; true }
             MotionEvent.ACTION_UP -> {
                 if (!resize && minimized && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
@@ -213,6 +258,7 @@ class FloatingBrowserService : Service() {
         params.width = browserWidth; params.height = browserHeight
         params.flags = browserFlags
         wm.addView(browser, params)
+        fitToDisplay()
         web?.let { page -> page.post {
             page.onResume()
             page.requestLayout()
