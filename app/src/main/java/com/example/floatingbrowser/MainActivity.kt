@@ -4,6 +4,7 @@ import android.app.*
 import android.content.*
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
@@ -67,6 +68,14 @@ class FloatingBrowserService : Service() {
             settings.domStorageEnabled = true
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
+            isFocusableInTouchMode = true
+            // A non-focusable overlay can receive taps, but WebView cannot ask the
+            // input method for a keyboard. Become focusable before WebView handles
+            // the touch so HTML search, login, and other form fields work normally.
+            setOnTouchListener { touched, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) enableWebInput(touched)
+                false
+            }
             loadUrl("https://www.google.com")
         }
         web = page
@@ -98,6 +107,15 @@ class FloatingBrowserService : Service() {
         } else params = layoutParams(d(360), d(560))
         root = view
         wm.addView(view, params)
+    }
+
+    private fun enableWebInput(view: View) {
+        if (params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0) {
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            root?.let { wm.updateViewLayout(it, params) }
+        }
+        view.requestFocusFromTouch()
     }
 
     private fun button(label: String, action: () -> Unit) = TextView(this).apply {
@@ -169,8 +187,12 @@ class FloatingBrowserService : Service() {
     private fun minimize() {
         root?.let { wm.removeView(it) }; root = null; minimized = true
         web?.destroy(); web = null
-        bubble = TextView(this).apply { text = "◉"; textSize = 28f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setBackgroundColor(Color.DKGRAY) }
-        params.width = d(56); params.height = d(56); params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        bubble = TextView(this).apply {
+            text = "◉"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.DKGRAY) }
+            elevation = d(4).toFloat()
+        }
+        params.width = d(48); params.height = d(48); params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         drag(bubble!!, false); wm.addView(bubble, params)
     }
     override fun onDestroy() { root?.let { wm.removeView(it) }; bubble?.let { wm.removeView(it) }; web?.destroy(); super.onDestroy() }
