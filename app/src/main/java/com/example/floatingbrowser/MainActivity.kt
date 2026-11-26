@@ -62,7 +62,7 @@ class FloatingBrowserService : Service() {
     private var bubbleOnLeft = true
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
-    private val barHeight get() = d(12)
+    private val barHeight get() = d(16)
 
     override fun onBind(intent: Intent?) = null
     override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int = START_NOT_STICKY
@@ -88,6 +88,7 @@ class FloatingBrowserService : Service() {
         val address = TextView(this).apply {
             text = "Bookmarks"; textSize = 8f; gravity = Gravity.CENTER_VERTICAL
             setTextColor(Color.WHITE); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END
+            tag = "address"
         }
         val page = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -217,7 +218,7 @@ class FloatingBrowserService : Service() {
     }
 
     private fun topButton(label: String, color: Int = Color.WHITE, action: () -> Unit) =
-        button(label, color, action).apply { textSize = 11f; layoutParams = LinearLayout.LayoutParams(d(26), barHeight) }
+        button(label, color, action).apply { textSize = 12f; layoutParams = LinearLayout.LayoutParams(d(26), barHeight) }
 
     private fun toggleMenu(parent: FrameLayout, page: WebView) {
         val old = parent.findViewWithTag<View>("menu")
@@ -247,22 +248,35 @@ class FloatingBrowserService : Service() {
     }
 
     private fun urlEditor(parent: FrameLayout, page: WebView) {
+        val address = parent.findViewWithTag<TextView>("address") ?: return
+        val bar = address.parent as? FrameLayout ?: return
+        val old = bar.findViewWithTag<View>("url_editor")
+        if (old != null) return
+        val priorFlags = params.flags
         val input = EditText(this).apply {
-            setSingleLine(true); setText(page.url); selectAll(); setBackgroundColor(Color.WHITE)
-            setOnEditorActionListener { _, _, _ -> loadTypedUrl(this, page, parent); true }
+            tag = "url_editor"; setSingleLine(true); setText(page.url); selectAll(); textSize = 8f
+            setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY); setBackgroundColor(Color.TRANSPARENT)
         }
-        parent.addView(input, FrameLayout.LayoutParams(-1, d(48), Gravity.TOP).apply { topMargin = barHeight })
+        fun close() {
+            bar.removeView(input)
+            address.visibility = View.VISIBLE
+            params.flags = priorFlags
+            wm.updateViewLayout(parent, params)
+        }
+        fun submit() {
+            var url = input.text.toString().trim()
+            if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
+            page.loadUrl(url)
+            close()
+        }
+        input.setOnEditorActionListener { _, _, _ -> submit(); true }
+        input.setOnFocusChangeListener { _, focused -> if (!focused) close() }
+        address.visibility = View.GONE
+        bar.addView(input, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(130); rightMargin = d(78) })
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         wm.updateViewLayout(parent, params)
         input.requestFocus()
         input.post { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT) }
-    }
-    private fun loadTypedUrl(input: EditText, page: WebView, parent: FrameLayout) {
-        var url = input.text.toString().trim()
-        if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
-        page.loadUrl(url); parent.removeView(input)
-        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        wm.updateViewLayout(parent, params)
     }
 
     private fun bookmarks(): List<Pair<String, String>> {
