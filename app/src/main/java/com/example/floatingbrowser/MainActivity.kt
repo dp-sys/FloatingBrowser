@@ -12,6 +12,7 @@ import android.view.*
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.*
 import kotlin.math.abs
 
@@ -41,6 +42,9 @@ class FloatingBrowserService : Service() {
     private var desktop = false
     private var browserWidth = 0
     private var browserHeight = 0
+    private var browserFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+    private var browserScrollX = 0
+    private var browserScrollY = 0
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
 
@@ -70,6 +74,7 @@ class FloatingBrowserService : Service() {
             settings.domStorageEnabled = true
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
+            webViewClient = WebViewClient()
             isFocusableInTouchMode = true
             // A non-focusable overlay can receive taps, but WebView cannot ask the
             // input method for a keyboard. Become focusable before WebView handles
@@ -188,8 +193,10 @@ class FloatingBrowserService : Service() {
     private fun current(): View? = if (minimized) bubble else root
     private fun minimize() {
         val browser = root ?: return
-        browserWidth = params.width; browserHeight = params.height
+        browserWidth = params.width; browserHeight = params.height; browserFlags = params.flags
+        browserScrollX = web?.scrollX ?: 0; browserScrollY = web?.scrollY ?: 0
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(browser.windowToken, 0)
+        web?.onPause()
         wm.removeView(browser)
         minimized = true
         bubble = TextView(this).apply {
@@ -204,8 +211,14 @@ class FloatingBrowserService : Service() {
         val browser = root ?: return
         minimized = false
         params.width = browserWidth; params.height = browserHeight
-        params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        params.flags = browserFlags
         wm.addView(browser, params)
+        web?.let { page -> page.post {
+            page.onResume()
+            page.requestLayout()
+            page.scrollTo(browserScrollX, browserScrollY)
+            page.invalidate()
+        }
     }
     override fun onDestroy() {
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
