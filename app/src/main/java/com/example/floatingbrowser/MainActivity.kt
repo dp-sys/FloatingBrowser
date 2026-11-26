@@ -121,8 +121,8 @@ class FloatingBrowserService : Service() {
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
             params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             root?.let { wm.updateViewLayout(it, params) }
+            view.requestFocusFromTouch()
         }
-        view.requestFocusFromTouch()
     }
 
     private fun button(label: String, action: () -> Unit) = TextView(this).apply {
