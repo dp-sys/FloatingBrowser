@@ -16,6 +16,8 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -91,7 +93,7 @@ class FloatingBrowserService : Service() {
                 if (event.action == MotionEvent.ACTION_DOWN) enableWebInput(touched)
                 false
             }
-            loadUrl("https://www.google.com")
+            loadHome(this)
         }
         web = page
         view.addView(page, FrameLayout.LayoutParams(-1, -1).apply { topMargin = d(28) })
@@ -191,6 +193,8 @@ class FloatingBrowserService : Service() {
         item("Forward") { if (page.canGoForward()) page.goForward() }
         item("Reload") { page.reload() }
         item("Enter URL") { urlEditor(parent, page) }
+        item("Add bookmark") { bookmarkEditor(parent, page) }
+        item("Bookmarks") { loadHome(page) }
         item("Open in default browser") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page.url ?: "https://www.google.com")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         item("Desktop mode: ${if (desktop) "on" else "off"}") {
             desktop = !desktop
@@ -217,6 +221,60 @@ class FloatingBrowserService : Service() {
         page.loadUrl(url); parent.removeView(input)
         params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         wm.updateViewLayout(parent, params)
+    }
+
+    private fun bookmarks(): List<Pair<String, String>> {
+        val saved = getSharedPreferences("bookmarks", MODE_PRIVATE).getString("items", "[]") ?: "[]"
+        return try {
+            val items = JSONArray(saved)
+            List(items.length()) { index ->
+                val item = items.getJSONObject(index)
+                item.getString("name") to item.getString("url")
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun loadHome(page: WebView) {
+        fun safe(value: String) = android.text.TextUtils.htmlEncode(value)
+        val links = bookmarks().joinToString("") { (name, url) ->
+            "<p><a href=\"${safe(url)}\">${safe(name)}</a></p>"
+        }.ifEmpty { "<p>No bookmarks yet.</p>" }
+        page.loadDataWithBaseURL("https://bookmarks.local/", "<html><body>$links</body></html>", "text/html", "UTF-8", null)
+    }
+
+    private fun bookmarkEditor(parent: FrameLayout, page: WebView) {
+        val old = parent.findViewWithTag<View>("bookmark_editor")
+        if (old != null) parent.removeView(old)
+        val priorFlags = params.flags
+        val editor = LinearLayout(this).apply {
+            tag = "bookmark_editor"; orientation = LinearLayout.HORIZONTAL; setBackgroundColor(Color.WHITE)
+        }
+        val name = EditText(this).apply {
+            setSingleLine(true); hint = "Bookmark name"; setText(page.title?.takeIf { it.isNotBlank() } ?: "Bookmark")
+            selectAll()
+        }
+        fun close() {
+            parent.removeView(editor)
+            params.flags = priorFlags
+            wm.updateViewLayout(parent, params)
+        }
+        val save = button("Save", Color.DKGRAY) {
+            val label = name.text.toString().trim().ifEmpty { "Bookmark" }
+            val url = page.url ?: return@button
+            val items = JSONArray(getSharedPreferences("bookmarks", MODE_PRIVATE).getString("items", "[]") ?: "[]")
+            items.put(JSONObject().put("name", label).put("url", url))
+            getSharedPreferences("bookmarks", MODE_PRIVATE).edit().putString("items", items.toString()).apply()
+            close()
+        }
+        val cancel = button("×", Color.DKGRAY) { close() }
+        editor.addView(name, LinearLayout.LayoutParams(0, d(48), 1f))
+        editor.addView(save, LinearLayout.LayoutParams(d(52), d(48)))
+        editor.addView(cancel, LinearLayout.LayoutParams(d(32), d(48)))
+        parent.addView(editor, FrameLayout.LayoutParams(-1, d(48), Gravity.TOP).apply { topMargin = d(28) })
+        params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        wm.updateViewLayout(parent, params)
+        name.requestFocus()
+        name.post { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(name, InputMethodManager.SHOW_IMPLICIT) }
     }
 
     private fun drag(v: View, resize: Boolean) = v.setOnTouchListener(object : View.OnTouchListener {
