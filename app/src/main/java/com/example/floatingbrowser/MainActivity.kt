@@ -39,6 +39,8 @@ class FloatingBrowserService : Service() {
     private var web: WebView? = null
     private var minimized = false
     private var desktop = false
+    private var browserWidth = 0
+    private var browserHeight = 0
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
 
@@ -176,7 +178,7 @@ class FloatingBrowserService : Service() {
                 if (!resize && minimized && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
                     bubble?.let { wm.removeView(it) }
                     bubble = null
-                    showBrowser()
+                    restoreBrowser()
                 }
                 true
             }
@@ -185,8 +187,11 @@ class FloatingBrowserService : Service() {
     })
     private fun current(): View? = if (minimized) bubble else root
     private fun minimize() {
-        root?.let { wm.removeView(it) }; root = null; minimized = true
-        web?.destroy(); web = null
+        val browser = root ?: return
+        browserWidth = params.width; browserHeight = params.height
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(browser.windowToken, 0)
+        wm.removeView(browser)
+        minimized = true
         bubble = TextView(this).apply {
             text = "◉"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.DKGRAY) }
@@ -195,6 +200,17 @@ class FloatingBrowserService : Service() {
         params.width = d(48); params.height = d(48); params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         drag(bubble!!, false); wm.addView(bubble, params)
     }
-    override fun onDestroy() { root?.let { wm.removeView(it) }; bubble?.let { wm.removeView(it) }; web?.destroy(); super.onDestroy() }
+    private fun restoreBrowser() {
+        val browser = root ?: return
+        minimized = false
+        params.width = browserWidth; params.height = browserHeight
+        params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        wm.addView(browser, params)
+    }
+    override fun onDestroy() {
+        if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
+        web?.destroy()
+        super.onDestroy()
+    }
     private fun createChannel() { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel("floating_browser", "Floating browser", NotificationManager.IMPORTANCE_LOW)) }
 }
