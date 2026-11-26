@@ -219,6 +219,7 @@ class FloatingBrowserService : Service() {
             page.scrollTo(browserScrollX, browserScrollY)
             page.invalidate()
         }
+        }
     }
     override fun onDestroy() {
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
