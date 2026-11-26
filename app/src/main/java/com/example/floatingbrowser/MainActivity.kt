@@ -5,7 +5,7 @@ import android.content.*
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Point
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.*
@@ -14,6 +14,7 @@ import android.view.*
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebChromeClient
 import android.webkit.WebViewClient
 import android.widget.*
 import org.json.JSONArray
@@ -57,6 +58,7 @@ class FloatingBrowserService : Service() {
     private var restoreY = 0
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
+    private val barHeight get() = d(12)
 
     override fun onBind(intent: Intent?) = null
     override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int = START_NOT_STICKY
@@ -79,12 +81,25 @@ class FloatingBrowserService : Service() {
     private fun showBrowser() {
         minimized = false
         val view = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
+        val address = TextView(this).apply {
+            text = "Bookmarks"; textSize = 8f; gravity = Gravity.CENTER_VERTICAL
+            setTextColor(Color.WHITE); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END
+        }
         val page = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    address.text = "${view.title ?: ""}  ·  $url"
+                }
+            }
+            webChromeClient = object : WebChromeClient() {
+                override fun onReceivedTitle(view: WebView, title: String?) {
+                    address.text = "${title ?: ""}  ·  ${view.url ?: ""}"
+                }
+            }
             isFocusableInTouchMode = true
             // A non-focusable overlay can receive taps, but WebView cannot ask the
             // input method for a keyboard. Become focusable before WebView handles
@@ -96,25 +111,27 @@ class FloatingBrowserService : Service() {
             loadHome(this)
         }
         web = page
-        view.addView(page, FrameLayout.LayoutParams(-1, -1).apply { topMargin = d(28) })
+        view.addView(page, FrameLayout.LayoutParams(-1, -1).apply { topMargin = barHeight })
 
         val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
         val dragArea = View(this)
         bar.addView(dragArea, FrameLayout.LayoutParams(-1, -1))
+        address.setOnClickListener { urlEditor(view, page) }
+        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(130); rightMargin = d(78) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        left.addView(button("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
-        left.addView(button("‹") { if (page.canGoBack()) page.goBack() })
-        left.addView(button("›") { if (page.canGoForward()) page.goForward() })
-        left.addView(button("−") { page.zoomOut() })
-        left.addView(button("+") { page.zoomIn() })
-        bar.addView(left, FrameLayout.LayoutParams(d(160), d(28), Gravity.START))
+        left.addView(topButton("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
+        left.addView(topButton("‹") { if (page.canGoBack()) page.goBack() })
+        left.addView(topButton("›") { if (page.canGoForward()) page.goForward() })
+        left.addView(topButton("−") { page.zoomOut() })
+        left.addView(topButton("+") { page.zoomIn() })
+        bar.addView(left, FrameLayout.LayoutParams(d(130), barHeight, Gravity.START))
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        right.addView(button("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
-        right.addView(button("—", Color.rgb(76, 175, 80)) { minimize() })
-        right.addView(button("×", Color.rgb(244, 67, 54)) { stopSelf() })
-        bar.addView(right, FrameLayout.LayoutParams(d(96), d(28), Gravity.END))
-        view.addView(bar, FrameLayout.LayoutParams(-1, d(28), Gravity.TOP))
+        right.addView(topButton("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
+        right.addView(topButton("—", Color.rgb(76, 175, 80)) { minimize() })
+        right.addView(topButton("×", Color.rgb(244, 67, 54)) { stopSelf() })
+        bar.addView(right, FrameLayout.LayoutParams(d(78), barHeight, Gravity.END))
+        view.addView(bar, FrameLayout.LayoutParams(-1, barHeight, Gravity.TOP))
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
         view.addView(handle, FrameLayout.LayoutParams(d(28), d(28), Gravity.BOTTOM or Gravity.END))
@@ -138,17 +155,35 @@ class FloatingBrowserService : Service() {
     }
 
     @Suppress("DEPRECATION")
-    private fun displaySize(): Point = Point().also { wm.defaultDisplay.getSize(it) }
+    private fun safeDisplayBounds(): Rect {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = wm.currentWindowMetrics
+            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+            )
+            return Rect(
+                metrics.bounds.left + insets.left,
+                metrics.bounds.top + insets.top,
+                metrics.bounds.right - insets.right,
+                metrics.bounds.bottom - insets.bottom
+            )
+        }
+        val size = android.graphics.Point()
+        wm.defaultDisplay.getSize(size)
+        return Rect(0, 0, size.x, size.y)
+    }
 
     private fun fitToDisplay() {
-        val size = displaySize()
+        val safe = safeDisplayBounds()
+        val landscapeMargin = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) d(12) else 0
+        safe.left += landscapeMargin; safe.right -= landscapeMargin
         if (maximized) {
-            params.width = size.x; params.height = size.y; params.x = 0; params.y = 0
+            params.width = safe.width(); params.height = safe.height(); params.x = safe.left; params.y = safe.top
         } else {
-            params.width = min(params.width, size.x)
-            params.height = min(params.height, size.y)
-            params.x = params.x.coerceIn(0, maxOf(0, size.x - params.width))
-            params.y = params.y.coerceIn(0, maxOf(0, size.y - params.height))
+            params.width = min(params.width, safe.width())
+            params.height = min(params.height, safe.height())
+            params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
+            params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
         }
         current()?.let { wm.updateViewLayout(it, params) }
     }
@@ -177,6 +212,9 @@ class FloatingBrowserService : Service() {
         setOnClickListener { action() }; layoutParams = LinearLayout.LayoutParams(d(32), d(28))
     }
 
+    private fun topButton(label: String, color: Int = Color.WHITE, action: () -> Unit) =
+        button(label, color, action).apply { textSize = 11f; layoutParams = LinearLayout.LayoutParams(d(26), barHeight) }
+
     private fun toggleMenu(parent: FrameLayout, page: WebView) {
         val old = parent.findViewWithTag<View>("menu")
         if (old != null) { parent.removeView(old); return }
@@ -189,19 +227,19 @@ class FloatingBrowserService : Service() {
             setOnClickListener { f(); parent.removeView(menu) }
             menu.addView(this, LinearLayout.LayoutParams(d(220), d(44)))
         }
+        item("Home") { loadHome(page) }
         item("Back") { if (page.canGoBack()) page.goBack() }
         item("Forward") { if (page.canGoForward()) page.goForward() }
         item("Reload") { page.reload() }
         item("Enter URL") { urlEditor(parent, page) }
         item("Add bookmark") { bookmarkEditor(parent, page) }
-        item("Bookmarks") { loadHome(page) }
         item("Open in default browser") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page.url ?: "https://www.google.com")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         item("Desktop mode: ${if (desktop) "on" else "off"}") {
             desktop = !desktop
             page.settings.userAgentString = if (desktop) WebSettings.getDefaultUserAgent(this).replace("Android", "X11; Linux x86_64") else WebSettings.getDefaultUserAgent(this)
             page.reload()
         }
-        parent.addView(menu, FrameLayout.LayoutParams(d(220), -2, Gravity.TOP or Gravity.START).apply { topMargin = d(28) })
+        parent.addView(menu, FrameLayout.LayoutParams(d(220), -2, Gravity.TOP or Gravity.START).apply { topMargin = barHeight })
     }
 
     private fun urlEditor(parent: FrameLayout, page: WebView) {
@@ -209,7 +247,7 @@ class FloatingBrowserService : Service() {
             setSingleLine(true); setText(page.url); selectAll(); setBackgroundColor(Color.WHITE)
             setOnEditorActionListener { _, _, _ -> loadTypedUrl(this, page, parent); true }
         }
-        parent.addView(input, FrameLayout.LayoutParams(-1, d(48), Gravity.TOP).apply { topMargin = d(28) })
+        parent.addView(input, FrameLayout.LayoutParams(-1, d(48), Gravity.TOP).apply { topMargin = barHeight })
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         wm.updateViewLayout(parent, params)
         input.requestFocus()
@@ -225,13 +263,14 @@ class FloatingBrowserService : Service() {
 
     private fun bookmarks(): List<Pair<String, String>> {
         val saved = getSharedPreferences("bookmarks", MODE_PRIVATE).getString("items", "[]") ?: "[]"
-        return try {
+        val custom = try {
             val items = JSONArray(saved)
             List(items.length()) { index ->
                 val item = items.getJSONObject(index)
                 item.getString("name") to item.getString("url")
             }
         } catch (_: Exception) { emptyList() }
+        return listOf("Google" to "https://www.google.com") + custom
     }
 
     private fun loadHome(page: WebView) {
@@ -265,12 +304,13 @@ class FloatingBrowserService : Service() {
             items.put(JSONObject().put("name", label).put("url", url))
             getSharedPreferences("bookmarks", MODE_PRIVATE).edit().putString("items", items.toString()).apply()
             close()
+            loadHome(page)
         }
         val cancel = button("×", Color.DKGRAY) { close() }
         editor.addView(name, LinearLayout.LayoutParams(0, d(48), 1f))
         editor.addView(save, LinearLayout.LayoutParams(d(52), d(48)))
         editor.addView(cancel, LinearLayout.LayoutParams(d(32), d(48)))
-        parent.addView(editor, FrameLayout.LayoutParams(-1, d(48), Gravity.TOP).apply { topMargin = d(28) })
+        parent.addView(editor, FrameLayout.LayoutParams(-1, d(48), Gravity.TOP).apply { topMargin = barHeight })
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         wm.updateViewLayout(parent, params)
         name.requestFocus()
