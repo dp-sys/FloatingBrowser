@@ -3,10 +3,11 @@ package com.example.floatingbrowser
 import android.app.*
 import android.content.*
 import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
@@ -42,7 +43,7 @@ class FloatingBrowserService : Service() {
     private lateinit var wm: WindowManager
     private lateinit var params: WindowManager.LayoutParams
     private var root: FrameLayout? = null
-    private var bubble: TextView? = null
+    private var bubble: BubbleView? = null
     private var web: WebView? = null
     private var minimized = false
     private var desktop = false
@@ -56,6 +57,9 @@ class FloatingBrowserService : Service() {
     private var restoreHeight = 0
     private var restoreX = 0
     private var restoreY = 0
+    private val bubbleHandler = Handler(Looper.getMainLooper())
+    private var bubbleCollapsed = false
+    private var bubbleOnLeft = true
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
     private val barHeight get() = d(12)
@@ -204,7 +208,7 @@ class FloatingBrowserService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        fitToDisplay()
+        if (minimized && bubbleCollapsed) collapseBubble() else fitToDisplay()
     }
 
     private fun button(label: String, color: Int = Color.WHITE, action: () -> Unit) = TextView(this).apply {
@@ -318,15 +322,24 @@ class FloatingBrowserService : Service() {
     }
 
     private fun drag(v: View, resize: Boolean) = v.setOnTouchListener(object : View.OnTouchListener {
-        var x = 0; var y = 0; var w = 0; var h = 0; var downX = 0f; var downY = 0f
+        var x = 0; var y = 0; var w = 0; var h = 0; var downX = 0f; var downY = 0f; var expandedFromHalf = false
         override fun onTouch(view: View, e: MotionEvent): Boolean = when (e.action) {
-            MotionEvent.ACTION_DOWN -> { if (resize) maximized = false; x = params.x; y = params.y; w = params.width; h = params.height; downX = e.rawX; downY = e.rawY; true }
+            MotionEvent.ACTION_DOWN -> {
+                if (resize) maximized = false
+                expandedFromHalf = !resize && minimized && bubbleCollapsed
+                if (expandedFromHalf) expandBubble()
+                x = params.x; y = params.y; w = params.width; h = params.height; downX = e.rawX; downY = e.rawY
+                true
+            }
             MotionEvent.ACTION_MOVE -> { if (resize) { params.width = maxOf(d(180), w + (e.rawX - downX).toInt()); params.height = maxOf(d(180), h + (e.rawY - downY).toInt()) } else { params.x = x + (e.rawX - downX).toInt(); params.y = y + (e.rawY - downY).toInt() }; current()?.let { wm.updateViewLayout(it, params) }; true }
             MotionEvent.ACTION_UP -> {
-                if (!resize && minimized && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
-                    bubble?.let { wm.removeView(it) }
-                    bubble = null
-                    restoreBrowser()
+                if (!resize && minimized) {
+                    if (!expandedFromHalf && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
+                        bubbleHandler.removeCallbacksAndMessages(null)
+                        bubble?.let { wm.removeView(it) }
+                        bubble = null
+                        restoreBrowser()
+                    } else scheduleBubbleCollapse()
                 }
                 true
             }
@@ -342,17 +355,44 @@ class FloatingBrowserService : Service() {
         web?.onPause()
         wm.removeView(browser)
         minimized = true
-        bubble = TextView(this).apply {
-            text = "◉"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.DKGRAY) }
-            elevation = d(4).toFloat()
-        }
+        bubbleCollapsed = false
+        bubble = BubbleView(this).apply { elevation = d(4).toFloat() }
         params.width = d(48); params.height = d(48); params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         drag(bubble!!, false); wm.addView(bubble, params)
+        scheduleBubbleCollapse()
+    }
+
+    private fun scheduleBubbleCollapse() {
+        bubbleHandler.removeCallbacksAndMessages(null)
+        bubbleHandler.postDelayed({ collapseBubble() }, 2_000)
+    }
+
+    private fun collapseBubble() {
+        val icon = bubble ?: return
+        if (!minimized) return
+        val safe = safeDisplayBounds()
+        bubbleOnLeft = params.x + params.width / 2 < (safe.left + safe.right) / 2
+        bubbleCollapsed = true
+        icon.half = true; icon.onLeft = bubbleOnLeft
+        params.width = d(24)
+        params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
+        params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
+        wm.updateViewLayout(icon, params)
+    }
+
+    private fun expandBubble() {
+        val icon = bubble ?: return
+        val safe = safeDisplayBounds()
+        bubbleCollapsed = false
+        icon.half = false
+        params.width = d(48)
+        params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
+        params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
+        wm.updateViewLayout(icon, params)
     }
     private fun restoreBrowser() {
         val browser = root ?: return
-        minimized = false
+        minimized = false; bubbleCollapsed = false
         params.width = browserWidth; params.height = browserHeight
         params.flags = browserFlags
         wm.addView(browser, params)
@@ -366,9 +406,27 @@ class FloatingBrowserService : Service() {
         }
     }
     override fun onDestroy() {
+        bubbleHandler.removeCallbacksAndMessages(null)
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
         web?.destroy()
         super.onDestroy()
     }
     private fun createChannel() { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel("floating_browser", "Floating browser", NotificationManager.IMPORTANCE_LOW)) }
+}
+
+private class BubbleView(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    var half = false
+    var onLeft = true
+
+    override fun onDraw(canvas: Canvas) {
+        val radius = height / 2f
+        val centerX = if (half) if (onLeft) 0f else width.toFloat() else width / 2f
+        paint.color = Color.rgb(255, 152, 0)
+        canvas.drawCircle(centerX, radius, radius, paint)
+        if (!half) {
+            paint.color = Color.WHITE
+            canvas.drawCircle(centerX, radius, radius / 5f, paint)
+        }
+    }
 }
