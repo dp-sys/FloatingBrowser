@@ -58,6 +58,7 @@ class FloatingBrowserService : Service() {
     private var restoreX = 0
     private var restoreY = 0
     private val bubbleHandler = Handler(Looper.getMainLooper())
+    private val titleHandler = Handler(Looper.getMainLooper())
     private var bubbleCollapsed = false
     private var bubbleOnLeft = true
     private val dp get() = resources.displayMetrics.density
@@ -119,9 +120,7 @@ class FloatingBrowserService : Service() {
         view.addView(page, FrameLayout.LayoutParams(-1, -1).apply { topMargin = barHeight })
 
         val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
-        val dragArea = View(this)
-        bar.addView(dragArea, FrameLayout.LayoutParams(-1, -1))
-        address.setOnClickListener { urlEditor(view, page) }
+        address.setOnTouchListener(titleBarTouch(address, bar, view, page))
         bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(130); rightMargin = d(78) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         left.addView(topButton("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
@@ -140,7 +139,7 @@ class FloatingBrowserService : Service() {
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
         view.addView(handle, FrameLayout.LayoutParams(d(28), d(28), Gravity.BOTTOM or Gravity.END))
-        drag(dragArea, false); drag(handle, true)
+        drag(handle, true)
         if (::params.isInitialized) {
             params.width = d(360); params.height = d(560)
             params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -220,6 +219,38 @@ class FloatingBrowserService : Service() {
     private fun topButton(label: String, color: Int = Color.WHITE, action: () -> Unit) =
         button(label, color, action).apply { textSize = 12f; layoutParams = LinearLayout.LayoutParams(d(26), barHeight) }
 
+    private fun titleBarTouch(title: View, bar: FrameLayout, parent: FrameLayout, page: WebView) = object : View.OnTouchListener {
+        var startX = 0; var startY = 0; var downX = 0f; var downY = 0f; var armed = false
+        val armMove = Runnable {
+            armed = true
+            bar.setBackgroundColor(Color.rgb(255, 152, 0))
+        }
+        override fun onTouch(view: View, event: MotionEvent): Boolean = when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                startX = params.x; startY = params.y; downX = event.rawX; downY = event.rawY; armed = false
+                titleHandler.postDelayed(armMove, 1_000)
+                true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (armed) {
+                    params.x = startX + (event.rawX - downX).toInt()
+                    params.y = startY + (event.rawY - downY).toInt()
+                    root?.let { wm.updateViewLayout(it, params) }
+                } else if (abs(event.rawX - downX) > d(6) || abs(event.rawY - downY) > d(6)) {
+                    titleHandler.removeCallbacks(armMove)
+                }
+                true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                titleHandler.removeCallbacks(armMove)
+                bar.setBackgroundColor(Color.rgb(82, 82, 82))
+                if (!armed && event.action == MotionEvent.ACTION_UP) urlEditor(parent, page)
+                true
+            }
+            else -> true
+        }
+    }
+
     private fun toggleMenu(parent: FrameLayout, page: WebView) {
         val old = parent.findViewWithTag<View>("menu")
         if (old != null) { parent.removeView(old); return }
@@ -253,12 +284,17 @@ class FloatingBrowserService : Service() {
         val old = bar.findViewWithTag<View>("url_editor")
         if (old != null) return
         val priorFlags = params.flags
+        fun setEditorBarHeight(height: Int) {
+            bar.layoutParams = (bar.layoutParams as FrameLayout.LayoutParams).apply { this.height = height }
+            page.layoutParams = (page.layoutParams as FrameLayout.LayoutParams).apply { topMargin = height }
+        }
         val input = EditText(this).apply {
-            tag = "url_editor"; setSingleLine(true); setText(page.url); selectAll(); textSize = 8f
-            setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY); setBackgroundColor(Color.TRANSPARENT)
+            tag = "url_editor"; setSingleLine(true); setText(page.url); selectAll(); textSize = 15f; gravity = Gravity.CENTER_VERTICAL
+            setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY); setBackgroundColor(Color.rgb(70, 70, 70))
         }
         fun close() {
             bar.removeView(input)
+            setEditorBarHeight(barHeight)
             address.visibility = View.VISIBLE
             params.flags = priorFlags
             wm.updateViewLayout(parent, params)
@@ -272,7 +308,8 @@ class FloatingBrowserService : Service() {
         input.setOnEditorActionListener { _, _, _ -> submit(); true }
         input.setOnFocusChangeListener { _, focused -> if (!focused) close() }
         address.visibility = View.GONE
-        bar.addView(input, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(130); rightMargin = d(78) })
+        setEditorBarHeight(d(44))
+        bar.addView(input, FrameLayout.LayoutParams(-1, d(28)).apply { leftMargin = d(4); rightMargin = d(4); topMargin = barHeight })
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         wm.updateViewLayout(parent, params)
         input.requestFocus()
@@ -421,6 +458,7 @@ class FloatingBrowserService : Service() {
     }
     override fun onDestroy() {
         bubbleHandler.removeCallbacksAndMessages(null)
+        titleHandler.removeCallbacksAndMessages(null)
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
         web?.destroy()
         super.onDestroy()
