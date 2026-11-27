@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Monochrome Quick Settings glyph: F B -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2,3H10V6H6V10H9V13H6V21H2ZM12,3H18C20.2,3 21,4.4 21,6.2V8.1C21,9.2 20.5,10 19.5,10.5C20.7,10.9 21.5,11.9 21.5,13.3V17.6C21.5,19.8 20.1,21 18,21H12ZM16,6V9H17.5V6ZM16,12V18H18V12Z" />
+</vector>

@@ -1,6 +1,7 @@
 package com.example.floatingbrowser
 
 import android.app.*
+import android.animation.ValueAnimator
 import android.content.*
 import android.content.res.Configuration
 import android.graphics.Canvas
@@ -65,16 +66,21 @@ class FloatingBrowserService : Service() {
     private var bubbleOnLeft = true
     private var bubbleAtTop = true
     private var lastOrientation = Configuration.ORIENTATION_UNDEFINED
+    private var reloadOnRotate = true
+    private var transitioning = false
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
     private val barHeight get() = d(24)
+    private val bubbleSize get() = d(36)
+    private val bubbleHalfSize get() = d(18)
 
     override fun onBind(intent: Intent?) = null
-    override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int = START_STICKY
 
     override fun onCreate() {
         super.onCreate()
         lastOrientation = resources.configuration.orientation
+        reloadOnRotate = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("reload_on_rotate", true)
         createChannel()
         startForeground(7, Notification.Builder(this, "floating_browser")
             .setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("Floating Browser")
@@ -137,7 +143,7 @@ class FloatingBrowserService : Service() {
 
         val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
         address.setOnTouchListener(titleBarTouch(address, bar, view, page))
-        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(58) })
+        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(62) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         left.addView(topButton("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
         left.addView(topButton("‹") { if (page.canGoBack()) page.goBack() })
@@ -149,10 +155,10 @@ class FloatingBrowserService : Service() {
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         right.addView(topButton("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
         right.addView(View(this), LinearLayout.LayoutParams(d(2), barHeight))
-        right.addView(topButton("—", Color.rgb(76, 175, 80)) { minimize() })
+        right.addView(topButton("—", Color.rgb(76, 175, 80), 22) { minimize() })
         right.addView(View(this), LinearLayout.LayoutParams(d(2), barHeight))
         right.addView(topButton("×", Color.rgb(244, 67, 54)) { confirmClose(view) })
-        bar.addView(right, FrameLayout.LayoutParams(d(58), barHeight, Gravity.END))
+        bar.addView(right, FrameLayout.LayoutParams(d(62), barHeight, Gravity.END))
         view.addView(bar, FrameLayout.LayoutParams(-1, barHeight, Gravity.TOP))
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
@@ -161,7 +167,12 @@ class FloatingBrowserService : Service() {
         if (::params.isInitialized) {
             params.width = d(360); params.height = d(560)
             params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        } else params = layoutParams(d(360), d(560))
+        } else {
+            params = layoutParams(d(360), d(560))
+            restoreWidth = params.width; restoreHeight = params.height
+            restoreX = params.x; restoreY = params.y
+            maximized = true
+        }
         root = view
         wm.addView(view, params)
         fitToDisplay()
@@ -201,7 +212,7 @@ class FloatingBrowserService : Service() {
         return Rect(0, 0, size.x, size.y)
     }
 
-    private fun fitToDisplay() {
+    private fun fitToDisplay(update: Boolean = true) {
         val safe = safeDisplayBounds()
         val landscapeMargin = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) d(12) else 0
         safe.left += landscapeMargin; safe.right -= landscapeMargin
@@ -216,11 +227,29 @@ class FloatingBrowserService : Service() {
                 params.y = safe.top
             }
         }
-        current()?.let { wm.updateViewLayout(it, params) }
+        if (update) current()?.let { wm.updateViewLayout(it, params) }
+    }
+
+    private fun animateRootBounds(fromX: Int, fromY: Int, fromWidth: Int, fromHeight: Int) {
+        val browser = root ?: return
+        val toX = params.x; val toY = params.y; val toWidth = params.width; val toHeight = params.height
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 180
+            addUpdateListener {
+                val progress = it.animatedValue as Float
+                params.x = (fromX + (toX - fromX) * progress).toInt()
+                params.y = (fromY + (toY - fromY) * progress).toInt()
+                params.width = (fromWidth + (toWidth - fromWidth) * progress).toInt()
+                params.height = (fromHeight + (toHeight - fromHeight) * progress).toInt()
+                wm.updateViewLayout(browser, params)
+            }
+            start()
+        }
     }
 
     private fun toggleMaximize() {
         if (minimized || root == null) return
+        val fromX = params.x; val fromY = params.y; val fromWidth = params.width; val fromHeight = params.height
         if (!maximized) {
             restoreWidth = params.width; restoreHeight = params.height
             restoreX = params.x; restoreY = params.y
@@ -230,11 +259,13 @@ class FloatingBrowserService : Service() {
             params.x = restoreX; params.y = restoreY
             maximized = false
         }
-        fitToDisplay()
+        fitToDisplay(false)
+        animateRootBounds(fromX, fromY, fromWidth, fromHeight)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        val orientationChanged = lastOrientation != Configuration.ORIENTATION_UNDEFINED && lastOrientation != newConfig.orientation
         val enteredLandscape = lastOrientation != Configuration.ORIENTATION_LANDSCAPE &&
             newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
         lastOrientation = newConfig.orientation
@@ -246,6 +277,7 @@ class FloatingBrowserService : Service() {
             if (enteredLandscape) params.x = safeDisplayBounds().left
             fitToDisplay()
         }
+        if (orientationChanged && reloadOnRotate && !minimized) web?.reload()
     }
 
     private fun button(label: String, color: Int = Color.WHITE, action: () -> Unit) = TextView(this).apply {
@@ -253,8 +285,8 @@ class FloatingBrowserService : Service() {
         setOnClickListener { action() }; layoutParams = LinearLayout.LayoutParams(d(32), d(28))
     }
 
-    private fun topButton(label: String, color: Int = Color.WHITE, action: () -> Unit) =
-        button(label, color, action).apply { textSize = 12f; layoutParams = LinearLayout.LayoutParams(d(18), barHeight) }
+    private fun topButton(label: String, color: Int = Color.WHITE, width: Int = 18, action: () -> Unit) =
+        button(label, color, action).apply { textSize = 12f; layoutParams = LinearLayout.LayoutParams(d(width), barHeight) }
 
     private fun titleBarTouch(title: View, bar: FrameLayout, parent: FrameLayout, page: WebView) = object : View.OnTouchListener {
         var startX = 0; var startY = 0; var downX = 0f; var downY = 0f; var armed = false
@@ -322,6 +354,10 @@ class FloatingBrowserService : Service() {
             page.settings.userAgentString = if (desktop) WebSettings.getDefaultUserAgent(this).replace("Android", "X11; Linux x86_64") else WebSettings.getDefaultUserAgent(this)
             page.reload()
         }
+        item("Reload on rotate [${if (reloadOnRotate) "x" else " "}]") {
+            reloadOnRotate = !reloadOnRotate
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("reload_on_rotate", reloadOnRotate).apply()
+        }
         parent.addView(dismiss, FrameLayout.LayoutParams(-1, -1))
         parent.addView(menu, FrameLayout.LayoutParams(d(180), -2, Gravity.TOP or Gravity.START).apply { leftMargin = d(5); topMargin = barHeight })
     }
@@ -371,7 +407,8 @@ class FloatingBrowserService : Service() {
             val url = when {
                 typed.startsWith("http://") || typed.startsWith("https://") -> typed
                 typed.contains('.') && !typed.any { it.isWhitespace() } -> "https://$typed"
-                else -> "https://www.google.com/search?q=${Uri.encode(typed)}"
+                else -> Uri.Builder().scheme("https").authority("www.google.com")
+                    .appendPath("search").appendQueryParameter("q", typed).build().toString()
             }
             page.loadUrl(url)
             close()
@@ -395,7 +432,10 @@ class FloatingBrowserService : Service() {
                 item.getString("name") to item.getString("url")
             }
         } catch (_: Exception) { emptyList() }
-        return listOf("Google" to "https://www.google.com") + custom
+        return listOf(
+            "Google" to "https://www.google.com",
+            "Genshin map" to "https://act.hoyolab.com/ys/app/interactive-map/index.html?bbs_presentation_style=no_header&bbs_theme=dark&bbs_theme_device=1&lang=en-us#/map/2?shown_types=&center=81.92,49.26&zoom=-1.50"
+        ) + custom
     }
 
     private fun loadHome(page: WebView) {
@@ -471,9 +511,7 @@ class FloatingBrowserService : Service() {
                 if (!resize && minimized) {
                     if (!expandedFromHalf && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
                         bubbleHandler.removeCallbacksAndMessages(null)
-                        bubble?.let { wm.removeView(it) }
-                        bubble = null
-                        restoreBrowser()
+                        openFromBubble()
                     } else scheduleBubbleCollapse()
                 }
                 true
@@ -484,23 +522,47 @@ class FloatingBrowserService : Service() {
     private fun current(): View? = if (minimized) bubble else root
     private fun minimize() {
         val browser = root ?: return
+        if (transitioning) return
+        transitioning = true
         browserWidth = params.width; browserHeight = params.height; browserFlags = params.flags
         browserScrollX = web?.scrollX ?: 0; browserScrollY = web?.scrollY ?: 0
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(browser.windowToken, 0)
-        web?.onPause()
-        wm.removeView(browser)
+        browser.animate().cancel()
+        browser.animate().scaleX(0.2f).scaleY(0.2f).alpha(0f).setDuration(180).withEndAction {
+            browser.scaleX = 1f; browser.scaleY = 1f; browser.alpha = 1f
+            wm.removeView(browser)
+            showMinimizedBubble()
+            transitioning = false
+        }.start()
+    }
+
+    private fun showMinimizedBubble() {
         minimized = true
         bubbleCollapsed = false
         bubble = BubbleView(this).apply { elevation = d(4).toFloat() }
-        params.width = d(48); params.height = d(48); params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        params.width = bubbleSize; params.height = bubbleSize; params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             val safe = safeDisplayBounds()
             bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
             params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
             params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
         }
-        drag(bubble!!, false); wm.addView(bubble, params)
+        drag(bubble!!, false)
+        bubble!!.alpha = 0f; bubble!!.scaleX = 0.6f; bubble!!.scaleY = 0.6f
+        wm.addView(bubble, params)
+        bubble!!.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
         scheduleBubbleCollapse()
+    }
+
+    private fun openFromBubble() {
+        val icon = bubble
+        if (icon == null) { restoreBrowser(); return }
+        icon.animate().cancel()
+        icon.animate().scaleX(0.2f).scaleY(0.2f).alpha(0f).setDuration(140).withEndAction {
+            wm.removeView(icon)
+            bubble = null
+            restoreBrowser()
+        }.start()
     }
 
     private fun scheduleBubbleCollapse() {
@@ -517,7 +579,7 @@ class FloatingBrowserService : Service() {
             bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
             bubbleCollapsed = true
             icon.half = true; icon.horizontal = true; icon.onTop = bubbleAtTop
-            params.width = d(48); params.height = d(24)
+            params.width = bubbleSize; params.height = bubbleHalfSize
             params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
             params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
             wm.updateViewLayout(icon, params)
@@ -526,7 +588,7 @@ class FloatingBrowserService : Service() {
         bubbleOnLeft = params.x + params.width / 2 < (safe.left + safe.right) / 2
         bubbleCollapsed = true
         icon.half = true; icon.horizontal = false; icon.onLeft = bubbleOnLeft
-        params.width = d(24)
+        params.width = bubbleHalfSize; params.height = bubbleSize
         params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
         params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
         wm.updateViewLayout(icon, params)
@@ -537,8 +599,8 @@ class FloatingBrowserService : Service() {
         val safe = safeDisplayBounds()
         bubbleCollapsed = false
         icon.half = false
-        params.width = d(48)
-        params.height = d(48)
+        params.width = bubbleSize
+        params.height = bubbleSize
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
             params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
@@ -553,10 +615,11 @@ class FloatingBrowserService : Service() {
         minimized = false; bubbleCollapsed = false
         params.width = browserWidth; params.height = browserHeight
         params.flags = browserFlags
+        browser.alpha = 0f; browser.scaleX = 0.2f; browser.scaleY = 0.2f
         wm.addView(browser, params)
         fitToDisplay()
+        browser.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(180).start()
         web?.let { page -> page.post {
-            page.onResume()
             page.requestLayout()
             page.scrollTo(browserScrollX, browserScrollY)
             page.invalidate()
