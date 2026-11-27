@@ -143,7 +143,7 @@ class FloatingBrowserService : Service() {
 
         val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
         address.setOnTouchListener(titleBarTouch(address, bar, view, page))
-        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(62) })
+        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(96); rightMargin = d(79) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         left.addView(topButton("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
         left.addView(topButton("‹") { if (page.canGoBack()) page.goBack() })
@@ -154,11 +154,11 @@ class FloatingBrowserService : Service() {
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         right.addView(topButton("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
-        right.addView(View(this), LinearLayout.LayoutParams(d(2), barHeight))
-        right.addView(topButton("—", Color.rgb(76, 175, 80), 22) { minimize() })
-        right.addView(View(this), LinearLayout.LayoutParams(d(2), barHeight))
+        right.addView(View(this), LinearLayout.LayoutParams(d(4), barHeight))
+        right.addView(topButton("—", Color.rgb(76, 175, 80), 28) { minimize() })
+        right.addView(View(this), LinearLayout.LayoutParams(d(5), barHeight))
         right.addView(topButton("×", Color.rgb(244, 67, 54)) { confirmClose(view) })
-        bar.addView(right, FrameLayout.LayoutParams(d(62), barHeight, Gravity.END))
+        bar.addView(right, FrameLayout.LayoutParams(d(73), barHeight, Gravity.END))
         view.addView(bar, FrameLayout.LayoutParams(-1, barHeight, Gravity.TOP))
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
@@ -421,7 +421,7 @@ class FloatingBrowserService : Service() {
         input.setOnEditorActionListener { _, _, _ -> submit(); true }
         input.setOnFocusChangeListener { _, focused -> if (!focused) close() }
         address.visibility = View.GONE
-        bar.addView(input, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(54) })
+        bar.addView(input, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(96); rightMargin = d(79) })
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         wm.updateViewLayout(parent, params)
         input.requestFocus()
