@@ -63,6 +63,7 @@ class FloatingBrowserService : Service() {
     private val titleHandler = Handler(Looper.getMainLooper())
     private var bubbleCollapsed = false
     private var bubbleOnLeft = true
+    private var bubbleAtTop = true
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
     private val barHeight get() = d(24)
@@ -88,6 +89,10 @@ class FloatingBrowserService : Service() {
     private fun showBrowser() {
         minimized = false
         val view = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
+        view.setOnApplyWindowInsetsListener { _, insets ->
+            if (!minimized) view.post { fitToDisplay() }
+            insets
+        }
         val address = TextView(this).apply {
             text = "Bookmarks"; textSize = 10f; gravity = Gravity.CENTER_VERTICAL
             setTextColor(Color.WHITE); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END
@@ -169,18 +174,24 @@ class FloatingBrowserService : Service() {
         }
     }
 
+    private fun statusBarVisible(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || wm.currentWindowMetrics.windowInsets.isVisible(WindowInsets.Type.statusBars())
+
     @Suppress("DEPRECATION")
     private fun safeDisplayBounds(): Rect {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val metrics = wm.currentWindowMetrics
-            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
-                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
-            )
+            val windowInsets = metrics.windowInsets
+            val cutout = windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.displayCutout())
+            val status = if (windowInsets.isVisible(WindowInsets.Type.statusBars()))
+                windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()) else android.graphics.Insets.NONE
+            val navigation = if (windowInsets.isVisible(WindowInsets.Type.navigationBars()))
+                windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars()) else android.graphics.Insets.NONE
             return Rect(
-                metrics.bounds.left + insets.left,
-                metrics.bounds.top + insets.top,
-                metrics.bounds.right - insets.right,
-                metrics.bounds.bottom - insets.bottom
+                metrics.bounds.left + maxOf(cutout.left, navigation.left),
+                metrics.bounds.top + status.top,
+                metrics.bounds.right - maxOf(cutout.right, navigation.right),
+                metrics.bounds.bottom - navigation.bottom
             )
         }
         val size = android.graphics.Point()
@@ -199,6 +210,9 @@ class FloatingBrowserService : Service() {
             params.height = min(params.height, safe.height())
             params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
             params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
+            if (!minimized && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && !statusBarVisible()) {
+                params.y = safe.top
+            }
         }
         current()?.let { wm.updateViewLayout(it, params) }
     }
@@ -219,7 +233,9 @@ class FloatingBrowserService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (minimized && bubbleCollapsed) collapseBubble() else fitToDisplay()
+        if (minimized && newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            if (bubbleCollapsed) collapseBubble() else expandBubble()
+        } else if (minimized && bubbleCollapsed) collapseBubble() else fitToDisplay()
     }
 
     private fun button(label: String, color: Int = Color.WHITE, action: () -> Unit) = TextView(this).apply {
@@ -422,7 +438,21 @@ class FloatingBrowserService : Service() {
                 x = params.x; y = params.y; w = params.width; h = params.height; downX = e.rawX; downY = e.rawY
                 true
             }
-            MotionEvent.ACTION_MOVE -> { if (resize) { params.width = maxOf(d(180), w + (e.rawX - downX).toInt()); params.height = maxOf(d(180), h + (e.rawY - downY).toInt()) } else { params.x = x + (e.rawX - downX).toInt(); params.y = y + (e.rawY - downY).toInt() }; current()?.let { wm.updateViewLayout(it, params) }; true }
+            MotionEvent.ACTION_MOVE -> {
+                if (resize) {
+                    params.width = maxOf(d(180), w + (e.rawX - downX).toInt())
+                    params.height = maxOf(d(180), h + (e.rawY - downY).toInt())
+                } else {
+                    params.x = x + (e.rawX - downX).toInt()
+                    if (minimized && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                        val safe = safeDisplayBounds()
+                        bubbleAtTop = e.rawY < (safe.top + safe.bottom) / 2f
+                        params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
+                    } else params.y = y + (e.rawY - downY).toInt()
+                }
+                current()?.let { wm.updateViewLayout(it, params) }
+                true
+            }
             MotionEvent.ACTION_UP -> {
                 if (!resize && minimized) {
                     if (!expandedFromHalf && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
@@ -449,6 +479,12 @@ class FloatingBrowserService : Service() {
         bubbleCollapsed = false
         bubble = BubbleView(this).apply { elevation = d(4).toFloat() }
         params.width = d(48); params.height = d(48); params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            val safe = safeDisplayBounds()
+            bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
+            params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
+            params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
+        }
         drag(bubble!!, false); wm.addView(bubble, params)
         scheduleBubbleCollapse()
     }
@@ -462,9 +498,20 @@ class FloatingBrowserService : Service() {
         val icon = bubble ?: return
         if (!minimized) return
         val safe = safeDisplayBounds()
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        if (landscape) {
+            bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
+            bubbleCollapsed = true
+            icon.half = true; icon.horizontal = true; icon.onTop = bubbleAtTop
+            params.width = d(48); params.height = d(24)
+            params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
+            params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
+            wm.updateViewLayout(icon, params)
+            return
+        }
         bubbleOnLeft = params.x + params.width / 2 < (safe.left + safe.right) / 2
         bubbleCollapsed = true
-        icon.half = true; icon.onLeft = bubbleOnLeft
+        icon.half = true; icon.horizontal = false; icon.onLeft = bubbleOnLeft
         params.width = d(24)
         params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
         params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
@@ -477,8 +524,14 @@ class FloatingBrowserService : Service() {
         bubbleCollapsed = false
         icon.half = false
         params.width = d(48)
-        params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
-        params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
+        params.height = d(48)
+        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
+            params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
+        } else {
+            params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
+            params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
+        }
         wm.updateViewLayout(icon, params)
     }
     private fun restoreBrowser() {
@@ -511,15 +564,18 @@ private class BubbleView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     var half = false
     var onLeft = true
+    var horizontal = false
+    var onTop = true
 
     override fun onDraw(canvas: Canvas) {
-        val radius = height / 2f
-        val centerX = if (half) if (onLeft) 0f else width.toFloat() else width / 2f
+        val radius = if (horizontal) width / 2f else height / 2f
+        val centerX = if (half && !horizontal) if (onLeft) 0f else width.toFloat() else width / 2f
+        val centerY = if (half && horizontal) if (onTop) 0f else height.toFloat() else height / 2f
         paint.color = Color.rgb(255, 152, 0)
-        canvas.drawCircle(centerX, radius, radius, paint)
+        canvas.drawCircle(centerX, centerY, radius, paint)
         if (!half) {
             paint.color = Color.WHITE
-            canvas.drawCircle(centerX, radius, radius / 5f, paint)
+            canvas.drawCircle(centerX, centerY, radius / 5f, paint)
         }
     }
 }
