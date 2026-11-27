@@ -192,7 +192,7 @@ class FloatingBrowserService : Service() {
 
     @Suppress("DEPRECATION")
     private fun safeDisplayBounds(): Rect {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val metrics = wm.currentWindowMetrics
             val windowInsets = metrics.windowInsets
             val cutout = windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.displayCutout())
@@ -200,22 +200,27 @@ class FloatingBrowserService : Service() {
                 windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()) else android.graphics.Insets.NONE
             val navigation = if (windowInsets.isVisible(WindowInsets.Type.navigationBars()))
                 windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars()) else android.graphics.Insets.NONE
-            return Rect(
+            Rect(
                 metrics.bounds.left + maxOf(cutout.left, navigation.left),
                 metrics.bounds.top + status.top,
                 metrics.bounds.right - maxOf(cutout.right, navigation.right),
                 metrics.bounds.bottom - navigation.bottom
             )
+        } else {
+            val size = android.graphics.Point()
+            wm.defaultDisplay.getSize(size)
+            Rect(0, 0, size.x, size.y)
         }
-        val size = android.graphics.Point()
-        wm.defaultDisplay.getSize(size)
-        return Rect(0, 0, size.x, size.y)
+        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            // Use the left edge fully; reserve the right edge for rounded corners and navigation gestures.
+            bounds.left = 0
+            bounds.right -= d(24)
+        }
+        return bounds
     }
 
     private fun fitToDisplay(update: Boolean = true) {
         val safe = safeDisplayBounds()
-        val landscapeMargin = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) d(12) else 0
-        safe.left += landscapeMargin; safe.right -= landscapeMargin
         if (maximized) {
             params.width = safe.width(); params.height = safe.height(); params.x = safe.left; params.y = safe.top
         } else {
@@ -441,9 +446,20 @@ class FloatingBrowserService : Service() {
     private fun loadHome(page: WebView) {
         fun safe(value: String) = android.text.TextUtils.htmlEncode(value)
         val links = bookmarks().joinToString("") { (name, url) ->
-            "<p><a href=\"${safe(url)}\">${safe(name)}</a></p>"
-        }.ifEmpty { "<p>No bookmarks yet.</p>" }
-        page.loadDataWithBaseURL("https://bookmarks.local/", "<html><body>$links</body></html>", "text/html", "UTF-8", null)
+            "<a class=\"bookmark\" href=\"${safe(url)}\">${safe(name)}</a>"
+        }.ifEmpty { "<div class=\"empty\">No bookmarks yet.</div>" }
+        val html = """
+            <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              * { box-sizing:border-box; }
+              body { margin:0; padding:16px; background:#f4f4f4; font-family:sans-serif; }
+              .bookmark { display:block; margin:0 0 10px; padding:16px; background:#ffffff; color:#303030;
+                text-decoration:none; font-size:16px; border-radius:10px; border-left:4px solid #f59e0b;
+                box-shadow:0 1px 3px rgba(0,0,0,.12); }
+              .empty { color:#777777; text-align:center; padding:24px; }
+            </style></head><body>$links</body></html>
+        """.trimIndent()
+        page.loadDataWithBaseURL("https://bookmarks.local/", html, "text/html", "UTF-8", null)
     }
 
     private fun bookmarkEditor(parent: FrameLayout, page: WebView) {
@@ -529,8 +545,8 @@ class FloatingBrowserService : Service() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(browser.windowToken, 0)
         browser.animate().cancel()
         browser.animate().scaleX(0.2f).scaleY(0.2f).alpha(0f).setDuration(180).withEndAction {
-            browser.scaleX = 1f; browser.scaleY = 1f; browser.alpha = 1f
             wm.removeView(browser)
+            browser.scaleX = 1f; browser.scaleY = 1f; browser.alpha = 1f
             showMinimizedBubble()
             transitioning = false
         }.start()
