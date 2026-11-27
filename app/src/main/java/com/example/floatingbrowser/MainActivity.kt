@@ -53,7 +53,7 @@ class FloatingBrowserService : Service() {
     private var desktop = false
     private var browserWidth = 0
     private var browserHeight = 0
-    private var browserFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+    private var browserFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
     private var browserScrollX = 0
     private var browserScrollY = 0
     private var maximized = false
@@ -93,7 +93,7 @@ class FloatingBrowserService : Service() {
 
     private fun layoutParams(width: Int, height: Int) = WindowManager.LayoutParams(
         width, height, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT
     ).apply { gravity = Gravity.TOP or Gravity.START; x = d(16); y = d(80) }
 
     private fun showBrowser() {
@@ -167,13 +167,11 @@ class FloatingBrowserService : Service() {
         view.addView(handle, FrameLayout.LayoutParams(d(28), d(28), Gravity.BOTTOM or Gravity.END))
         drag(handle, true)
         if (::params.isInitialized) {
-            params.width = d(360); params.height = d(560)
-            params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         } else {
-            params = layoutParams(d(360), d(560))
-            restoreWidth = params.width; restoreHeight = params.height
-            restoreX = params.x; restoreY = params.y
-            maximized = true
+            params = layoutParams(1, 1)
+            maximized = false
+            loadGeometry()
         }
         root = view
         wm.addView(view, params)
@@ -214,9 +212,9 @@ class FloatingBrowserService : Service() {
             Rect(0, 0, size.x, size.y)
         }
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            // Use the left edge fully; reserve the right edge for rounded corners and navigation gestures.
+            // Use the left edge fully; permanently reserve the right edge for rounded corners/navigation.
             bounds.left = 0
-            bounds.right -= d(24)
+            bounds.right -= d(40)
         }
         return bounds
     }
@@ -235,6 +233,31 @@ class FloatingBrowserService : Service() {
             }
         }
         if (update) current()?.let { wm.updateViewLayout(it, params) }
+    }
+
+    private fun geometryKey(orientation: Int = resources.configuration.orientation) =
+        if (orientation == Configuration.ORIENTATION_LANDSCAPE) "landscape" else "portrait"
+
+    private fun loadGeometry() {
+        val safe = safeDisplayBounds()
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val prefs = getSharedPreferences("geometry", MODE_PRIVATE)
+        val key = geometryKey()
+        val defaultWidth = (safe.width() * if (landscape) 0.45f else 0.80f).toInt()
+        val defaultHeight = (safe.height() * if (landscape) 0.80f else 0.60f).toInt()
+        params.width = prefs.getInt("${key}_width", defaultWidth)
+        params.height = prefs.getInt("${key}_height", defaultHeight)
+        params.x = prefs.getInt("${key}_x", safe.left)
+        params.y = prefs.getInt("${key}_y", safe.top)
+        fitToDisplay(false)
+    }
+
+    private fun saveGeometry(orientation: Int = resources.configuration.orientation) {
+        if (maximized || minimized) return
+        val key = geometryKey(orientation)
+        getSharedPreferences("geometry", MODE_PRIVATE).edit()
+            .putInt("${key}_width", params.width).putInt("${key}_height", params.height)
+            .putInt("${key}_x", params.x).putInt("${key}_y", params.y).apply()
     }
 
     private fun animateRootBounds(fromX: Int, fromY: Int, fromWidth: Int, fromHeight: Int) {
@@ -276,11 +299,16 @@ class FloatingBrowserService : Service() {
         val enteredLandscape = lastOrientation != Configuration.ORIENTATION_LANDSCAPE &&
             newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
         lastOrientation = newConfig.orientation
+        if (orientationChanged && !minimized && !maximized) {
+            saveGeometry(if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE)
+            loadGeometry()
+            root?.let { wm.updateViewLayout(it, params) }
+        }
         if (minimized && newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             if (bubbleCollapsed) collapseBubble() else expandBubble()
         } else if (minimized && bubbleCollapsed) {
             collapseBubble()
-        } else {
+        } else if (!(orientationChanged && !minimized && !maximized)) {
             if (enteredLandscape) params.x = safeDisplayBounds().left
             fitToDisplay()
         }
@@ -320,7 +348,7 @@ class FloatingBrowserService : Service() {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 titleHandler.removeCallbacks(armMove)
                 bar.setBackgroundColor(Color.rgb(82, 82, 82))
-                if (!armed && event.action == MotionEvent.ACTION_UP) urlEditor(parent, page)
+                if (armed) saveGeometry() else if (event.action == MotionEvent.ACTION_UP) urlEditor(parent, page)
                 true
             }
             else -> true
@@ -361,10 +389,14 @@ class FloatingBrowserService : Service() {
             page.settings.userAgentString = if (desktop) WebSettings.getDefaultUserAgent(this).replace("Android", "X11; Linux x86_64") else WebSettings.getDefaultUserAgent(this)
             page.reload()
         }
-        item("Reload on rotate [${if (reloadOnRotate) "x" else " "}]") {
-            reloadOnRotate = !reloadOnRotate
-            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("reload_on_rotate", reloadOnRotate).apply()
-        }
+        menu.addView(CheckBox(this).apply {
+            text = "Reload on rotate"; textSize = 14f; setTextColor(Color.DKGRAY); isChecked = reloadOnRotate
+            setPadding(d(4), 0, 0, 0)
+            setOnCheckedChangeListener { _, checked ->
+                reloadOnRotate = checked
+                getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("reload_on_rotate", checked).apply()
+            }
+        }, LinearLayout.LayoutParams(d(180), d(34)))
         parent.addView(dismiss, FrameLayout.LayoutParams(-1, -1))
         parent.addView(menu, FrameLayout.LayoutParams(d(180), -2, Gravity.TOP or Gravity.START).apply { leftMargin = d(5); topMargin = barHeight })
     }
@@ -531,7 +563,7 @@ class FloatingBrowserService : Service() {
                         bubbleHandler.removeCallbacksAndMessages(null)
                         openFromBubble()
                     } else scheduleBubbleCollapse()
-                }
+                } else if (!minimized) saveGeometry()
                 true
             }
             else -> true
@@ -547,8 +579,8 @@ class FloatingBrowserService : Service() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(browser.windowToken, 0)
         browser.animate().cancel()
         browser.animate().scaleX(0.2f).scaleY(0.2f).alpha(0f).setDuration(180).withEndAction {
-            wm.removeView(browser)
-            browser.scaleX = 1f; browser.scaleY = 1f; browser.alpha = 1f
+            // Detach while still transparent; resetting it before removal can flash one full-size frame.
+            wm.removeViewImmediate(browser)
             showMinimizedBubble()
             transitioning = false
         }.start()
@@ -558,7 +590,8 @@ class FloatingBrowserService : Service() {
         minimized = true
         bubbleCollapsed = false
         bubble = BubbleView(this).apply { elevation = d(4).toFloat() }
-        params.width = bubbleSize; params.height = bubbleSize; params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        params.width = bubbleSize; params.height = bubbleSize
+        params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             val safe = safeDisplayBounds()
             bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
@@ -648,6 +681,7 @@ class FloatingBrowserService : Service() {
         bubbleHandler.removeCallbacksAndMessages(null)
         titleHandler.removeCallbacksAndMessages(null)
         CookieManager.getInstance().flush()
+        saveGeometry()
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
         web?.destroy()
         setTileActive(false)
