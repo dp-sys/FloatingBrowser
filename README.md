@@ -25,7 +25,7 @@ Get the latest APK from the [Releases](../../releases) page.
 
 | Action | How |
 |---|---|
-| Move the window | Drag the top strip |
+| Move the window | Long press and drag the top strip/title bar |
 | Resize | Drag the bottom-right corner handle |
 | Zoom | Zoom +/- buttons at the top left |
 | Menu | Menu button at the top left |

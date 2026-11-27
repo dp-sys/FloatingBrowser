@@ -541,16 +541,41 @@ class FloatingBrowserService : Service() {
         val links = bookmarks().joinToString("") { (name, url) ->
             "<a class=\"bookmark\" href=\"${safe(url)}\">${safe(name)}</a>"
         }.ifEmpty { "<div class=\"empty\">No bookmarks yet.</div>" }
+        val help = """
+            <details class="help">
+              <summary>How to use this app?</summary>
+              <table>
+                <tr><th>Action</th><th>How</th></tr>
+                <tr><td>Move the window</td><td>Long press and drag the top strip/title bar</td></tr>
+                <tr><td>Resize</td><td>Drag the bottom-right corner handle</td></tr>
+                <tr><td>Zoom</td><td>Zoom +/- buttons at the top left</td></tr>
+                <tr><td>Menu</td><td>Menu button at the top left</td></tr>
+                <tr><td>Minimize</td><td>Button at the top right; becomes a draggable bubble</td></tr>
+                <tr><td>Close</td><td>X button at the top right</td></tr>
+              </table>
+            </details>
+        """.trimIndent()
         val html = """
             <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
               * { box-sizing:border-box; }
               body { margin:0; padding:16px; background:#f4f4f4; font-family:sans-serif; }
+              .help { margin:0 0 10px; padding:9px 11px; background:#ffffff; color:#303030;
+                font-size:12px; border-radius:8px; border-left:4px solid #f59e0b;
+                box-shadow:0 1px 3px rgba(0,0,0,.12); }
+              .help summary { position:relative; padding-right:20px; font-weight:600; cursor:pointer;
+                list-style:none; }
+              .help summary::-webkit-details-marker { display:none; }
+              .help summary::after { content:"⌄"; position:absolute; right:0; }
+              .help[open] summary::after { content:"⌃"; }
+              .help table { width:100%; margin-top:8px; border-collapse:collapse; text-align:left; }
+              .help th, .help td { padding:4px 3px; vertical-align:top; border-top:1px solid #eeeeee; }
+              .help th:first-child, .help td:first-child { width:34%; }
               .bookmark { display:block; margin:0 0 6px; padding:10px 12px; background:#ffffff; color:#303030;
                 text-decoration:none; font-size:14px; border-radius:8px; border-left:4px solid #f59e0b;
                 box-shadow:0 1px 3px rgba(0,0,0,.12); }
               .empty { color:#777777; text-align:center; padding:24px; }
-            </style></head><body>$links</body></html>
+            </style></head><body>$help$links</body></html>
         """.trimIndent()
         page.loadDataWithBaseURL("https://bookmarks.local/", html, "text/html", "UTF-8", null)
     }
