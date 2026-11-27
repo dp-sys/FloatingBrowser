@@ -260,6 +260,31 @@ class FloatingBrowserService : Service() {
             .putInt("${key}_x", params.x).putInt("${key}_y", params.y).apply()
     }
 
+    private fun loadBubblePosition() {
+        val safe = safeDisplayBounds()
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val prefs = getSharedPreferences("bubble", MODE_PRIVATE)
+        val key = geometryKey()
+        params.x = prefs.getInt("${key}_x", safe.left)
+        params.y = prefs.getInt("${key}_y", if (landscape) safe.top else (safe.top + safe.bottom - params.height) / 2)
+        if (landscape) {
+            bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
+            params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
+            params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
+        } else {
+            bubbleOnLeft = params.x + params.width / 2 < (safe.left + safe.right) / 2
+            params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
+            params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
+        }
+    }
+
+    private fun saveBubblePosition(orientation: Int = resources.configuration.orientation) {
+        if (!minimized) return
+        val key = geometryKey(orientation)
+        getSharedPreferences("bubble", MODE_PRIVATE).edit()
+            .putInt("${key}_x", params.x).putInt("${key}_y", params.y).apply()
+    }
+
     private fun animateRootBounds(fromX: Int, fromY: Int, fromWidth: Int, fromHeight: Int) {
         val browser = root ?: return
         val toX = params.x; val toY = params.y; val toWidth = params.width; val toHeight = params.height
@@ -296,9 +321,14 @@ class FloatingBrowserService : Service() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         val orientationChanged = lastOrientation != Configuration.ORIENTATION_UNDEFINED && lastOrientation != newConfig.orientation
+        val oldOrientation = lastOrientation
         val enteredLandscape = lastOrientation != Configuration.ORIENTATION_LANDSCAPE &&
             newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
         lastOrientation = newConfig.orientation
+        if (orientationChanged && minimized) {
+            saveBubblePosition(oldOrientation)
+            loadBubblePosition()
+        }
         if (orientationChanged && !minimized && !maximized) {
             saveGeometry(if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE)
             loadGeometry()
@@ -487,8 +517,8 @@ class FloatingBrowserService : Service() {
             <style>
               * { box-sizing:border-box; }
               body { margin:0; padding:16px; background:#f4f4f4; font-family:sans-serif; }
-              .bookmark { display:block; margin:0 0 10px; padding:16px; background:#ffffff; color:#303030;
-                text-decoration:none; font-size:16px; border-radius:10px; border-left:4px solid #f59e0b;
+              .bookmark { display:block; margin:0 0 6px; padding:10px 12px; background:#ffffff; color:#303030;
+                text-decoration:none; font-size:14px; border-radius:8px; border-left:4px solid #f59e0b;
                 box-shadow:0 1px 3px rgba(0,0,0,.12); }
               .empty { color:#777777; text-align:center; padding:24px; }
             </style></head><body>$links</body></html>
@@ -562,7 +592,10 @@ class FloatingBrowserService : Service() {
                     if (!expandedFromHalf && abs(e.rawX - downX) < d(4).toFloat() && abs(e.rawY - downY) < d(4).toFloat()) {
                         bubbleHandler.removeCallbacksAndMessages(null)
                         openFromBubble()
-                    } else scheduleBubbleCollapse()
+                    } else {
+                        saveBubblePosition()
+                        scheduleBubbleCollapse()
+                    }
                 } else if (!minimized) saveGeometry()
                 true
             }
@@ -592,12 +625,7 @@ class FloatingBrowserService : Service() {
         bubble = BubbleView(this).apply { elevation = d(4).toFloat() }
         params.width = bubbleSize; params.height = bubbleSize
         params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            val safe = safeDisplayBounds()
-            bubbleAtTop = params.y + params.height / 2 < (safe.top + safe.bottom) / 2
-            params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
-            params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
-        }
+        loadBubblePosition()
         drag(bubble!!, false)
         bubble!!.alpha = 0f; bubble!!.scaleX = 0.6f; bubble!!.scaleY = 0.6f
         wm.addView(bubble, params)
@@ -634,6 +662,7 @@ class FloatingBrowserService : Service() {
             params.y = if (bubbleAtTop) safe.top else safe.bottom - params.height
             params.x = params.x.coerceIn(safe.left, maxOf(safe.left, safe.right - params.width))
             wm.updateViewLayout(icon, params)
+            saveBubblePosition()
             return
         }
         bubbleOnLeft = params.x + params.width / 2 < (safe.left + safe.right) / 2
@@ -643,6 +672,7 @@ class FloatingBrowserService : Service() {
         params.x = if (bubbleOnLeft) safe.left else safe.right - params.width
         params.y = params.y.coerceIn(safe.top, maxOf(safe.top, safe.bottom - params.height))
         wm.updateViewLayout(icon, params)
+        saveBubblePosition()
     }
 
     private fun expandBubble() {
