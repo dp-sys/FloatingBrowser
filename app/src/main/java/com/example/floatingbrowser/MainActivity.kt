@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.*
 import android.provider.Settings
 import android.service.quicksettings.TileService
+import android.service.quicksettings.Tile
 import android.view.*
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebSettings
@@ -79,6 +80,7 @@ class FloatingBrowserService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        setTileActive(true)
         lastOrientation = resources.configuration.orientation
         reloadOnRotate = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("reload_on_rotate", true)
         createChannel()
@@ -648,7 +650,12 @@ class FloatingBrowserService : Service() {
         CookieManager.getInstance().flush()
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
         web?.destroy()
+        setTileActive(false)
         super.onDestroy()
+    }
+    private fun setTileActive(active: Boolean) {
+        getSharedPreferences("tile", MODE_PRIVATE).edit().putBoolean("active", active).apply()
+        TileService.requestListeningState(this, ComponentName(this, FloatingBrowserTileService::class.java))
     }
     private fun createChannel() { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel("floating_browser", "Floating browser", NotificationManager.IMPORTANCE_LOW)) }
 }
@@ -674,13 +681,26 @@ private class BubbleView(context: Context) : View(context) {
 }
 
 class FloatingBrowserTileService : TileService() {
+    override fun onStartListening() {
+        super.onStartListening()
+        refreshState()
+    }
+
     override fun onClick() {
         super.onClick()
         val launch = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (Settings.canDrawOverlays(this)) {
             startForegroundService(Intent(this, FloatingBrowserService::class.java))
+            qsTile.state = Tile.STATE_ACTIVE
+            qsTile.updateTile()
         } else {
             startActivityAndCollapse(launch)
         }
+    }
+
+    private fun refreshState() {
+        qsTile.state = if (getSharedPreferences("tile", MODE_PRIVATE).getBoolean("active", false))
+            Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        qsTile.updateTile()
     }
 }
