@@ -102,7 +102,13 @@ class FloatingBrowserService : Service() {
 
     private fun showBrowser() {
         minimized = false
-        val view = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
+        val view = FrameLayout(this).apply {
+            setBackgroundColor(Color.WHITE)
+            foreground = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                setStroke(1, Color.BLACK)
+            }
+        }
         view.setOnApplyWindowInsetsListener { _, insets ->
             if (!minimized) view.post { fitToDisplay() }
             insets
@@ -381,7 +387,7 @@ class FloatingBrowserService : Service() {
         override fun onTouch(view: View, event: MotionEvent): Boolean = when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 startX = params.x; startY = params.y; downX = event.rawX; downY = event.rawY; armed = false
-                titleHandler.postDelayed(armMove, 1_000)
+                titleHandler.postDelayed(armMove, 400)
                 true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -568,7 +574,7 @@ class FloatingBrowserService : Service() {
               .help summary::-webkit-details-marker { display:none; }
               .help summary::after { content:"⌄"; position:absolute; right:0; }
               .help[open] summary::after { content:"⌃"; }
-              .help table { width:100%; margin-top:8px; border-collapse:collapse; text-align:left; }
+              .help table { width:100%; margin-top:8px; border-collapse:collapse; text-align:left; font-size:12px; }
               .help th, .help td { padding:4px 3px; vertical-align:top; border-top:1px solid #eeeeee; }
               .help th:first-child, .help td:first-child { width:34%; }
               .bookmark { display:block; margin:0 0 6px; padding:10px 12px; background:#ffffff; color:#303030;
