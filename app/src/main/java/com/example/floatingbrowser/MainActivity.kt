@@ -53,6 +53,8 @@ class FloatingBrowserService : Service() {
     private var desktop = false
     private var browserWidth = 0
     private var browserHeight = 0
+    private var browserX = 0
+    private var browserY = 0
     private var browserFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
     private var browserScrollX = 0
     private var browserScrollY = 0
@@ -322,24 +324,38 @@ class FloatingBrowserService : Service() {
         super.onConfigurationChanged(newConfig)
         val orientationChanged = lastOrientation != Configuration.ORIENTATION_UNDEFINED && lastOrientation != newConfig.orientation
         val oldOrientation = lastOrientation
-        val enteredLandscape = lastOrientation != Configuration.ORIENTATION_LANDSCAPE &&
-            newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
         lastOrientation = newConfig.orientation
-        if (orientationChanged && minimized) {
-            saveBubblePosition(oldOrientation)
-            loadBubblePosition()
-        }
-        if (orientationChanged && !minimized && !maximized) {
-            saveGeometry(if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE)
+        if (orientationChanged) {
+            if (minimized) saveBubblePosition(oldOrientation)
+            else if (!maximized) saveGeometry(oldOrientation)
+
+            val wasMaximized = maximized
+            maximized = false
             loadGeometry()
-            root?.let { wm.updateViewLayout(it, params) }
-        }
-        if (minimized && newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            if (bubbleCollapsed) collapseBubble() else expandBubble()
-        } else if (minimized && bubbleCollapsed) {
-            collapseBubble()
-        } else if (!(orientationChanged && !minimized && !maximized)) {
-            if (enteredLandscape) params.x = safeDisplayBounds().left
+            if (minimized) {
+                browserWidth = params.width; browserHeight = params.height
+                browserX = params.x; browserY = params.y
+            }
+            if (wasMaximized) {
+                restoreWidth = params.width; restoreHeight = params.height
+                restoreX = params.x; restoreY = params.y
+                maximized = true
+            }
+
+            if (minimized) {
+                params.width = bubbleSize; params.height = bubbleSize
+                loadBubblePosition()
+                if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                    if (bubbleCollapsed) collapseBubble() else expandBubble()
+                } else if (bubbleCollapsed) {
+                    collapseBubble()
+                } else {
+                    bubble?.let { wm.updateViewLayout(it, params) }
+                }
+            } else {
+                fitToDisplay()
+            }
+        } else {
             fitToDisplay()
         }
         if (orientationChanged && reloadOnRotate && !minimized) web?.reload()
@@ -608,6 +624,8 @@ class FloatingBrowserService : Service() {
         if (transitioning) return
         transitioning = true
         browserWidth = params.width; browserHeight = params.height; browserFlags = params.flags
+        browserX = params.x; browserY = params.y
+        saveGeometry()
         browserScrollX = web?.scrollX ?: 0; browserScrollY = web?.scrollY ?: 0
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(browser.windowToken, 0)
         browser.animate().cancel()
@@ -695,6 +713,7 @@ class FloatingBrowserService : Service() {
         val browser = root ?: return
         minimized = false; bubbleCollapsed = false
         params.width = browserWidth; params.height = browserHeight
+        params.x = browserX; params.y = browserY
         params.flags = browserFlags
         browser.alpha = 0f; browser.scaleX = 0.2f; browser.scaleY = 0.2f
         wm.addView(browser, params)
