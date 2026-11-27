@@ -1,12 +1,14 @@
 # FloatingBrowser
 
+### Main purpose for creating this app : For Genshin impact interactive map - very lite weight.
+--- 
 A tiny, lightweight floating browser for Android. It opens a resizable web window over any other app, with almost no UI chrome so the page gets the space.
 
 ## Features
 
 - Floating window over other apps (Display over other apps)
 - Uses the system WebView (Chrome's engine), so the APK stays small and RAM use stays low
-- Ultra-thin top strip, drag it to move the window
+- Ultra-thin top strip, drag it to move the window, so more room for web
 - Top left: zoom out, zoom in, and menu (back, forward, reload, URL, open in browser, desktop mode)
 - Top right: minimize to a small bubble, and close
 - Resizable from the bottom-right corner handle
@@ -16,7 +18,7 @@ A tiny, lightweight floating browser for Android. It opens a resizable web windo
 
 Get the latest APK from the [Releases](../../releases) page.
 
-1. Download `app-debug.apk`.
+1. Download `Floating Browser.apk`.
 2. Open it on your phone and allow **Install unknown apps** if asked.
 3. If Play Protect warns, tap **Install anyway** (self-built debug app).
 4. Open FloatingBrowser and grant **Display over other apps**.
@@ -25,7 +27,7 @@ Get the latest APK from the [Releases](../../releases) page.
 
 | Action | How |
 |---|---|
-| Move the window | Drag the top strip |
+| Move the window | Long press and Drag the top strip/top title bar |
 | Resize | Drag the bottom-right corner handle |
 | Zoom | Zoom +/- buttons at the top left |
 | Menu | Menu button at the top left |
