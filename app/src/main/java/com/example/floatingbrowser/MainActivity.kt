@@ -84,7 +84,9 @@ class FloatingBrowserService : Service() {
         super.onCreate()
         setTileActive(true)
         lastOrientation = resources.configuration.orientation
-        reloadOnRotate = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("reload_on_rotate", true)
+        val settings = getSharedPreferences("settings", MODE_PRIVATE)
+        reloadOnRotate = settings.getBoolean("reload_on_rotate", true)
+        desktop = settings.getBoolean("desktop_mode", false)
         createChannel()
         startForeground(7, Notification.Builder(this, "floating_browser")
             .setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("Floating Browser")
@@ -118,6 +120,7 @@ class FloatingBrowserService : Service() {
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(false)
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            settings.userAgentString = desktopUserAgent()
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
             cookies.setAcceptThirdPartyCookies(this, true)
@@ -430,11 +433,16 @@ class FloatingBrowserService : Service() {
         item("Enter URL") { urlEditor(parent, page) }
         item("Add bookmark") { bookmarkEditor(parent, page) }
         item("Open in default browser") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page.url ?: "https://www.google.com")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        item("Desktop mode: ${if (desktop) "on" else "off"}") {
-            desktop = !desktop
-            page.settings.userAgentString = if (desktop) WebSettings.getDefaultUserAgent(this).replace("Android", "X11; Linux x86_64") else WebSettings.getDefaultUserAgent(this)
-            page.reload()
-        }
+        menu.addView(CheckBox(this).apply {
+            text = "Desktop mode"; textSize = 14f; setTextColor(Color.DKGRAY); isChecked = desktop
+            setPadding(d(4), 0, 0, 0)
+            setOnCheckedChangeListener { _, checked ->
+                desktop = checked
+                getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("desktop_mode", checked).apply()
+                page.settings.userAgentString = desktopUserAgent()
+                page.reload()
+            }
+        }, LinearLayout.LayoutParams(d(180), d(34)))
         menu.addView(CheckBox(this).apply {
             text = "Reload on rotate"; textSize = 14f; setTextColor(Color.DKGRAY); isChecked = reloadOnRotate
             setPadding(d(4), 0, 0, 0)
@@ -445,6 +453,11 @@ class FloatingBrowserService : Service() {
         }, LinearLayout.LayoutParams(d(180), d(34)))
         parent.addView(dismiss, FrameLayout.LayoutParams(-1, -1))
         parent.addView(menu, FrameLayout.LayoutParams(d(180), -2, Gravity.TOP or Gravity.START).apply { leftMargin = d(5); topMargin = barHeight })
+    }
+
+    private fun desktopUserAgent(): String {
+        val default = WebSettings.getDefaultUserAgent(this)
+        return if (desktop) default.replace("Android", "X11; Linux x86_64") else default
     }
 
     private fun confirmClose(parent: FrameLayout) {
