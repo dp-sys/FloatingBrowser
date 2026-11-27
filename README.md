@@ -7,6 +7,7 @@ A tiny, lightweight floating browser for Android. It opens a resizable web windo
 ## Features
 
 - Floating window over other apps (Display over other apps)
+- Quick Settings tile: start the floating browser from the notification shade, without opening the app
 - Uses the system WebView (Chrome's engine), so the APK stays small and RAM use stays low
 - Ultra-thin top strip, drag it to move the window, so more room for web
 - Top left: zoom out, zoom in, and menu (back, forward, reload, URL, open in browser, desktop mode)
@@ -27,16 +28,21 @@ Get the latest APK from the [Releases](../../releases) page.
 
 | Action | How |
 |---|---|
-<<<<<<< HEAD
-| Move the window | Long press and drag the top strip/title bar |
-=======
 | Move the window | Long press and Drag the top strip/top title bar |
->>>>>>> b7f74394bb277fc5fcad90ad05697c477da3b204
 | Resize | Drag the bottom-right corner handle |
 | Zoom | Zoom +/- buttons at the top left |
 | Menu | Menu button at the top left |
 | Minimize | Button at the top right, becomes a draggable bubble |
 | Close | X button at the top right |
+
+## Images
+<p align="center">
+  <img src="screenshots/ss1.jpg" width="40%" />
+  <img src="screenshots/ss2.jpg" width="40%" />
+</p>
+<p align="center">
+  <img src="screenshots/ss3g.jpg" width="85%" />
+</p>
 
 ## Requirements
 
