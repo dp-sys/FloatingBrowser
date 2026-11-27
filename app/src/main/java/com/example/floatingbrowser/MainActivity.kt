@@ -63,7 +63,7 @@ class FloatingBrowserService : Service() {
     private var bubbleOnLeft = true
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
-    private val barHeight get() = d(16)
+    private val barHeight get() = d(24)
 
     override fun onBind(intent: Intent?) = null
     override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int = START_NOT_STICKY
@@ -87,7 +87,7 @@ class FloatingBrowserService : Service() {
         minimized = false
         val view = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
         val address = TextView(this).apply {
-            text = "Bookmarks"; textSize = 8f; gravity = Gravity.CENTER_VERTICAL
+            text = "Bookmarks"; textSize = 10f; gravity = Gravity.CENTER_VERTICAL
             setTextColor(Color.WHITE); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END
             tag = "address"
         }
@@ -121,20 +121,20 @@ class FloatingBrowserService : Service() {
 
         val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
         address.setOnTouchListener(titleBarTouch(address, bar, view, page))
-        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(130); rightMargin = d(78) })
+        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(54) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         left.addView(topButton("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
         left.addView(topButton("‹") { if (page.canGoBack()) page.goBack() })
         left.addView(topButton("›") { if (page.canGoForward()) page.goForward() })
         left.addView(topButton("−") { page.zoomOut() })
         left.addView(topButton("+") { page.zoomIn() })
-        bar.addView(left, FrameLayout.LayoutParams(d(130), barHeight, Gravity.START))
+        bar.addView(left, FrameLayout.LayoutParams(d(90), barHeight, Gravity.START))
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         right.addView(topButton("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
         right.addView(topButton("—", Color.rgb(76, 175, 80)) { minimize() })
         right.addView(topButton("×", Color.rgb(244, 67, 54)) { stopSelf() })
-        bar.addView(right, FrameLayout.LayoutParams(d(78), barHeight, Gravity.END))
+        bar.addView(right, FrameLayout.LayoutParams(d(54), barHeight, Gravity.END))
         view.addView(bar, FrameLayout.LayoutParams(-1, barHeight, Gravity.TOP))
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
@@ -217,7 +217,7 @@ class FloatingBrowserService : Service() {
     }
 
     private fun topButton(label: String, color: Int = Color.WHITE, action: () -> Unit) =
-        button(label, color, action).apply { textSize = 12f; layoutParams = LinearLayout.LayoutParams(d(26), barHeight) }
+        button(label, color, action).apply { textSize = 12f; layoutParams = LinearLayout.LayoutParams(d(18), barHeight) }
 
     private fun titleBarTouch(title: View, bar: FrameLayout, parent: FrameLayout, page: WebView) = object : View.OnTouchListener {
         var startX = 0; var startY = 0; var downX = 0f; var downY = 0f; var armed = false
@@ -284,17 +284,13 @@ class FloatingBrowserService : Service() {
         val old = bar.findViewWithTag<View>("url_editor")
         if (old != null) return
         val priorFlags = params.flags
-        fun setEditorBarHeight(height: Int) {
-            bar.layoutParams = (bar.layoutParams as FrameLayout.LayoutParams).apply { this.height = height }
-            page.layoutParams = (page.layoutParams as FrameLayout.LayoutParams).apply { topMargin = height }
-        }
         val input = EditText(this).apply {
-            tag = "url_editor"; setSingleLine(true); setText(page.url); selectAll(); textSize = 15f; gravity = Gravity.CENTER_VERTICAL
+            tag = "url_editor"; setSingleLine(true); setText(page.url); selectAll(); textSize = 12f; gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = false; setPadding(0, 0, 0, 0)
             setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY); setBackgroundColor(Color.rgb(70, 70, 70))
         }
         fun close() {
             bar.removeView(input)
-            setEditorBarHeight(barHeight)
             address.visibility = View.VISIBLE
             params.flags = priorFlags
             wm.updateViewLayout(parent, params)
@@ -308,8 +304,7 @@ class FloatingBrowserService : Service() {
         input.setOnEditorActionListener { _, _, _ -> submit(); true }
         input.setOnFocusChangeListener { _, focused -> if (!focused) close() }
         address.visibility = View.GONE
-        setEditorBarHeight(d(44))
-        bar.addView(input, FrameLayout.LayoutParams(-1, d(28)).apply { leftMargin = d(4); rightMargin = d(4); topMargin = barHeight })
+        bar.addView(input, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(54) })
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         wm.updateViewLayout(parent, params)
         input.requestFocus()
