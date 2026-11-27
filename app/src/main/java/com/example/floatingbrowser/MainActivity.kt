@@ -11,11 +11,13 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
+import android.service.quicksettings.TileService
 import android.view.*
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebChromeClient
+import android.webkit.CookieManager
 import android.webkit.WebViewClient
 import android.widget.*
 import org.json.JSONArray
@@ -91,14 +93,21 @@ class FloatingBrowserService : Service() {
             setTextColor(Color.WHITE); isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END
             tag = "address"
         }
+        val cookies = CookieManager.getInstance().apply { setAcceptCookie(true) }
         val page = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportMultipleWindows(false)
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
+            cookies.setAcceptThirdPartyCookies(this, true)
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
                     address.text = "${view.title ?: ""}  ·  $url"
+                    cookies.flush()
                 }
             }
             webChromeClient = object : WebChromeClient() {
@@ -490,6 +499,7 @@ class FloatingBrowserService : Service() {
     override fun onDestroy() {
         bubbleHandler.removeCallbacksAndMessages(null)
         titleHandler.removeCallbacksAndMessages(null)
+        CookieManager.getInstance().flush()
         if (minimized) bubble?.let { wm.removeView(it) } else root?.let { wm.removeView(it) }
         web?.destroy()
         super.onDestroy()
@@ -510,6 +520,18 @@ private class BubbleView(context: Context) : View(context) {
         if (!half) {
             paint.color = Color.WHITE
             canvas.drawCircle(centerX, radius, radius / 5f, paint)
+        }
+    }
+}
+
+class FloatingBrowserTileService : TileService() {
+    override fun onClick() {
+        super.onClick()
+        val launch = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (Settings.canDrawOverlays(this)) {
+            startForegroundService(Intent(this, FloatingBrowserService::class.java))
+        } else {
+            startActivityAndCollapse(launch)
         }
     }
 }
