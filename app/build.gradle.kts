@@ -21,12 +21,17 @@ android {
     }
 }
 
-androidComponents {
-    onVariants(selector().all()) { variant ->
-        variant.outputs.forEach { output ->
-            output.outputFileName.set("Floating Browser.apk")
-        }
+tasks.register("renameDebugApk") {
+    doLast {
+        val outputDir = layout.buildDirectory.dir("outputs/apk/debug").get().asFile
+        val source = outputDir.resolve("app-debug.apk")
+        val destination = outputDir.resolve("Floating Browser.apk")
+        if (source.exists()) source.renameTo(destination)
     }
+}
+
+tasks.named("assembleDebug") {
+    finalizedBy("renameDebugApk")
 }
 
 kotlin {
