@@ -30,8 +30,10 @@ tasks.register("renameDebugApk") {
     }
 }
 
-tasks.named("assembleDebug") {
-    finalizedBy("renameDebugApk")
+tasks.configureEach {
+    if (name == "assembleDebug") {
+        finalizedBy("renameDebugApk")
+    }
 }
 
 kotlin {
