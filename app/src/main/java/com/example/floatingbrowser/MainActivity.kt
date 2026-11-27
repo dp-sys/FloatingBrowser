@@ -121,7 +121,7 @@ class FloatingBrowserService : Service() {
 
         val bar = FrameLayout(this).apply { setBackgroundColor(Color.rgb(82, 82, 82)) }
         address.setOnTouchListener(titleBarTouch(address, bar, view, page))
-        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(54) })
+        bar.addView(address, FrameLayout.LayoutParams(-1, barHeight).apply { leftMargin = d(90); rightMargin = d(58) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         left.addView(topButton("☰", Color.rgb(255, 152, 0)) { toggleMenu(view, page) })
         left.addView(topButton("‹") { if (page.canGoBack()) page.goBack() })
@@ -132,9 +132,11 @@ class FloatingBrowserService : Service() {
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         right.addView(topButton("□", Color.rgb(255, 193, 7)) { toggleMaximize() })
+        right.addView(View(this), LinearLayout.LayoutParams(d(2), barHeight))
         right.addView(topButton("—", Color.rgb(76, 175, 80)) { minimize() })
-        right.addView(topButton("×", Color.rgb(244, 67, 54)) { stopSelf() })
-        bar.addView(right, FrameLayout.LayoutParams(d(54), barHeight, Gravity.END))
+        right.addView(View(this), LinearLayout.LayoutParams(d(2), barHeight))
+        right.addView(topButton("×", Color.rgb(244, 67, 54)) { confirmClose(view) })
+        bar.addView(right, FrameLayout.LayoutParams(d(58), barHeight, Gravity.END))
         view.addView(bar, FrameLayout.LayoutParams(-1, barHeight, Gravity.TOP))
 
         val handle = TextView(this).apply { text = "◢"; textSize = 18f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER }
@@ -253,15 +255,25 @@ class FloatingBrowserService : Service() {
 
     private fun toggleMenu(parent: FrameLayout, page: WebView) {
         val old = parent.findViewWithTag<View>("menu")
-        if (old != null) { parent.removeView(old); return }
+        if (old != null) {
+            parent.removeView(old)
+            parent.findViewWithTag<View>("menu_dismiss")?.let { parent.removeView(it) }
+            return
+        }
+        val dismiss = View(this).apply { tag = "menu_dismiss" }
         val menu = LinearLayout(this).apply {
-            tag = "menu"; orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE)
+            tag = "menu"; orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(238, 238, 238))
             elevation = d(8).toFloat()
         }
+        fun closeMenu() {
+            parent.removeView(menu)
+            parent.findViewWithTag<View>("menu_dismiss")?.let { parent.removeView(it) }
+        }
+        dismiss.setOnClickListener { closeMenu() }
         fun item(name: String, f: () -> Unit) = TextView(this).apply {
-            text = name; textSize = 16f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER_VERTICAL
-            setOnClickListener { f(); parent.removeView(menu) }
-            menu.addView(this, LinearLayout.LayoutParams(d(220), d(44)))
+            text = name; textSize = 14f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { f(); closeMenu() }
+            menu.addView(this, LinearLayout.LayoutParams(d(180), d(34)))
         }
         item("Home") { loadHome(page) }
         item("Back") { if (page.canGoBack()) page.goBack() }
@@ -275,7 +287,31 @@ class FloatingBrowserService : Service() {
             page.settings.userAgentString = if (desktop) WebSettings.getDefaultUserAgent(this).replace("Android", "X11; Linux x86_64") else WebSettings.getDefaultUserAgent(this)
             page.reload()
         }
-        parent.addView(menu, FrameLayout.LayoutParams(d(220), -2, Gravity.TOP or Gravity.START).apply { topMargin = barHeight })
+        parent.addView(dismiss, FrameLayout.LayoutParams(-1, -1))
+        parent.addView(menu, FrameLayout.LayoutParams(d(180), -2, Gravity.TOP or Gravity.START).apply { leftMargin = d(5); topMargin = barHeight })
+    }
+
+    private fun confirmClose(parent: FrameLayout) {
+        if (parent.findViewWithTag<View>("close_confirm") != null) return
+        val dim = View(this).apply { tag = "close_dismiss"; setBackgroundColor(Color.argb(80, 0, 0, 0)) }
+        val panel = LinearLayout(this).apply {
+            tag = "close_confirm"; orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE)
+            elevation = d(8).toFloat()
+        }
+        fun dismiss() {
+            parent.removeView(panel)
+            parent.findViewWithTag<View>("close_dismiss")?.let { parent.removeView(it) }
+        }
+        dim.setOnClickListener { dismiss() }
+        panel.addView(TextView(this).apply {
+            text = "Close browser?"; textSize = 14f; setTextColor(Color.DKGRAY); gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, d(34)))
+        val actions = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        actions.addView(button("No", Color.DKGRAY) { dismiss() }, LinearLayout.LayoutParams(d(48), d(30)))
+        actions.addView(button("Close", Color.rgb(220, 50, 47)) { stopSelf() }, LinearLayout.LayoutParams(d(58), d(30)))
+        panel.addView(actions, LinearLayout.LayoutParams(-1, d(30)))
+        parent.addView(dim, FrameLayout.LayoutParams(-1, -1))
+        parent.addView(panel, FrameLayout.LayoutParams(d(170), d(64), Gravity.CENTER))
     }
 
     private fun urlEditor(parent: FrameLayout, page: WebView) {
