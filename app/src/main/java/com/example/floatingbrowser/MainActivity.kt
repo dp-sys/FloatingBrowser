@@ -64,6 +64,7 @@ class FloatingBrowserService : Service() {
     private var bubbleCollapsed = false
     private var bubbleOnLeft = true
     private var bubbleAtTop = true
+    private var lastOrientation = Configuration.ORIENTATION_UNDEFINED
     private val dp get() = resources.displayMetrics.density
     private fun d(n: Int) = (n * dp).toInt()
     private val barHeight get() = d(24)
@@ -73,6 +74,7 @@ class FloatingBrowserService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        lastOrientation = resources.configuration.orientation
         createChannel()
         startForeground(7, Notification.Builder(this, "floating_browser")
             .setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("Floating Browser")
@@ -233,9 +235,17 @@ class FloatingBrowserService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        val enteredLandscape = lastOrientation != Configuration.ORIENTATION_LANDSCAPE &&
+            newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        lastOrientation = newConfig.orientation
         if (minimized && newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             if (bubbleCollapsed) collapseBubble() else expandBubble()
-        } else if (minimized && bubbleCollapsed) collapseBubble() else fitToDisplay()
+        } else if (minimized && bubbleCollapsed) {
+            collapseBubble()
+        } else {
+            if (enteredLandscape) params.x = safeDisplayBounds().left
+            fitToDisplay()
+        }
     }
 
     private fun button(label: String, color: Int = Color.WHITE, action: () -> Unit) = TextView(this).apply {
@@ -357,8 +367,12 @@ class FloatingBrowserService : Service() {
             wm.updateViewLayout(parent, params)
         }
         fun submit() {
-            var url = input.text.toString().trim()
-            if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
+            val typed = input.text.toString().trim()
+            val url = when {
+                typed.startsWith("http://") || typed.startsWith("https://") -> typed
+                typed.contains('.') && !typed.any { it.isWhitespace() } -> "https://$typed"
+                else -> "https://www.google.com/search?q=${Uri.encode(typed)}"
+            }
             page.loadUrl(url)
             close()
         }
